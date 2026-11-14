@@ -18,8 +18,7 @@ struct Token {
 //! Tokenize a value. False (with `error` set) on an unterminated string or unbalanced parens.
 bool TokenizeValue(const string &text, vector<Token> &out, string &error);
 
-//! The shared slug rule (plan D6, GitHub style): lower-case, keep letters, digits, '-' and '_',
-//! spaces become '-', everything else is dropped.
+//! The shared slug rule: duckdb_markdown's GenerateSectionId, byte for byte (the readers' rule).
 string Slug(const string &text);
 
 //! Evaluates values against one block: strings concatenate; attr(x), text(), slug(v), url().

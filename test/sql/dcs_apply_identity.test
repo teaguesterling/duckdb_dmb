@@ -53,7 +53,7 @@ SELECT o, a['id'] FROM applied('heading { -dcs-id: auto; }') WHERE t = 'heading'
 3	comments
 11	end
 
-# auto de-duplicates within the document, GitHub style (D6).
+# auto de-duplicates within the document (D6). The readers do not: dmb adds -1, -2 where they repeat.
 query II
 SELECT u.element_order, u.attributes['id'] FROM (SELECT unnest(dcs_apply([
   b('block', 'heading', 'Notes', 1, MAP {'heading_level': '2'}, 0),
@@ -63,11 +63,29 @@ SELECT u.element_order, u.attributes['id'] FROM (SELECT unnest(dcs_apply([
 0	notes
 1	notes-1
 
-# slug keeps letters of any script and drops punctuation (Review Focus 2).
+# slug is the readers' own rule, byte for byte: duckdb_markdown's GenerateSectionId (fc9bbe0),
+# which webbed also uses (Teague, 2026-11-13: "Match the readers"). ASCII lower-case; every byte
+# outside [a-z0-9_-] becomes '-'; runs of '-' collapse; leading and trailing '-' go. So
+# non-ASCII letters are lost, as in the readers (Review Focus 2).
 query I
 SELECT a['x'] FROM applied('paragraph { --x: slug("Zoë''s notes"); }') WHERE o = 1;
 ----
-zoës-notes
+zo-s-notes
+
+query I
+SELECT a['x'] FROM applied('paragraph { --x: slug("Café"); }') WHERE o = 1;
+----
+caf
+
+query I
+SELECT a['x'] FROM applied('paragraph { --x: slug("  Hello,  World -- 2026! "); }') WHERE o = 1;
+----
+hello-world-2026
+
+query I
+SELECT a['x'] FROM applied('paragraph { --x: slug("snake_case Field guide"); }') WHERE o = 1;
+----
+snake_case-field-guide
 
 # -dcs-class adds and removes, keeping the existing order.
 query I

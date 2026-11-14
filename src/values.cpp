@@ -1,6 +1,5 @@
 #include "values.hpp"
 
-#include "utf8proc.hpp"
 
 namespace duckdb {
 namespace dmb {
@@ -137,38 +136,32 @@ bool TokenizeValue(const string &text, vector<Token> &out, string &error) {
 }
 
 string Slug(const string &text) {
+	// duckdb_markdown's GenerateSectionId (src/markdown_utils.cpp, fc9bbe0), byte for byte and
+	// without its duplicate counter: the readers' own rule, so dmb's ids match theirs (Teague,
+	// 2026-11-13). ASCII lower-case; any byte outside [a-z0-9_-] becomes '-'; runs of '-'
+	// collapse; leading and trailing '-' are trimmed. Non-ASCII bytes become '-', as there.
 	string out;
-	auto data = reinterpret_cast<const utf8proc_uint8_t *>(text.data());
-	utf8proc_ssize_t len = static_cast<utf8proc_ssize_t>(text.size());
-	utf8proc_ssize_t pos = 0;
-	while (pos < len) {
-		utf8proc_int32_t cp;
-		auto n = utf8proc_iterate(data + pos, len - pos, &cp);
-		if (n <= 0) {
-			pos++;
-			continue;
+	out.reserve(text.size());
+	bool prev_dash = false;
+	for (char raw : text) {
+		char c = (raw >= 'A' && raw <= 'Z') ? static_cast<char>(raw - 'A' + 'a') : raw;
+		bool keep = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_';
+		char oc = keep ? c : '-';
+		if (oc == '-') {
+			if (!prev_dash) {
+				out += '-';
+			}
+			prev_dash = true;
+		} else {
+			out += oc;
+			prev_dash = false;
 		}
-		pos += n;
-		if (cp == ' ') {
-			out += '-';
-			continue;
-		}
-		if (cp == '-' || cp == '_') {
-			out += static_cast<char>(cp);
-			continue;
-		}
-		auto cat = utf8proc_category(cp);
-		bool keep = (cat >= UTF8PROC_CATEGORY_LU && cat <= UTF8PROC_CATEGORY_LO) ||
-		            (cat >= UTF8PROC_CATEGORY_ND && cat <= UTF8PROC_CATEGORY_NO) ||
-		            (cat >= UTF8PROC_CATEGORY_MN && cat <= UTF8PROC_CATEGORY_ME);
-		if (!keep) {
-			continue;
-		}
-		utf8proc_uint8_t buf[4];
-		auto w = utf8proc_encode_char(utf8proc_tolower(cp), buf);
-		out.append(reinterpret_cast<const char *>(buf), static_cast<size_t>(w));
 	}
-	return out;
+	auto b = out.find_first_not_of('-');
+	if (b == string::npos) {
+		return string();
+	}
+	return out.substr(b, out.find_last_not_of('-') - b + 1);
 }
 
 ValueEvaluator::ValueEvaluator(const BlockTree &tree_p) : tree(tree_p) {
