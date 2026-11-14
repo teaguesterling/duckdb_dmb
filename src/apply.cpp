@@ -21,7 +21,7 @@ const std::set<string> &ReservedAttributes() {
 
 //! Properties the spec defines that later tasks implement. Diagnosed as not-yet, never silently dropped.
 const std::set<string> &LaterProperties() {
-	static const std::set<string> s {"display",          "-dcs-prune",         "-dcs-dedupe",     "-dcs-wrap",
+	static const std::set<string> s {"-dcs-wrap",
 	                                 "-dcs-as",          "-dcs-level",         "content",         "-dcs-content-as",
 	                                 "-dcs-content-place", "text-transform",   "text-overflow",   "-dcs-replace",
 	                                 "-dcs-link",        "counter-reset",      "counter-increment", "order"};
@@ -30,6 +30,10 @@ const std::set<string> &LaterProperties() {
 
 bool IsPhase1(const string &p) {
 	return p == "-dcs-id" || p == "-dcs-class";
+}
+
+bool IsPhase2(const string &p) {
+	return p == "display" || p == "-dcs-prune" || p == "-dcs-dedupe";
 }
 
 bool IsCustom(const string &p) {
@@ -143,6 +147,15 @@ struct Engine {
 					}
 				} else if (IsPhase1(p)) {
 					continue;
+				} else if (IsPhase2(p)) {
+					auto v = Trim(d.value_text);
+					if (p == "display" && v != "none") {
+						Diag("warning", "not-yet", "display: " + v + " is not supported yet", d.pos);
+					} else if (p == "-dcs-prune" && v != "section") {
+						Diag("error", "bad-value", "-dcs-prune takes section, not " + v, d.pos);
+					} else if (p == "-dcs-dedupe" && v != "text") {
+						Diag("error", "bad-value", "-dcs-dedupe takes text, not " + v, d.pos);
+					}
 				} else if (LaterProperties().count(p)) {
 					Diag("warning", "not-yet", p + " is not supported yet", d.pos);
 				} else if (p.compare(0, 5, "-dcs-") == 0) {
@@ -278,6 +291,50 @@ struct Engine {
 		}
 	}
 
+	//! Phase 2: which rows to drop. Matches the same document as the attribute pass.
+	vector<bool> Prune(const BlockTree &tree) {
+		vector<bool> drop(tree.nodes.size(), false);
+		auto cascade = Cascade(tree, IsPhase2);
+		auto mark = [&](idx_t from, idx_t to, idx_t i, const Winner &w) {
+			for (idx_t j = from; j < to; j++) {
+				drop[j] = true;
+			}
+			result.changes.push_back(Change {tree.nodes[i].element_order, w.rule->index, w.decl->property,
+			                                 Value("present"), Value(LogicalType::VARCHAR)});
+		};
+		std::set<string> seen_texts;
+		for (idx_t i = 0; i < tree.nodes.size(); i++) {
+			if (drop[i]) {
+				continue;
+			}
+			auto &props = cascade[i];
+			auto display = props.find("display");
+			if (display != props.end() && Trim(display->second.decl->value_text) == "none") {
+				mark(i, tree.nodes[i].subtree_end, i, display->second);
+				continue;
+			}
+			auto prune = props.find("-dcs-prune");
+			if (prune != props.end() && Trim(prune->second.decl->value_text) == "section") {
+				if (tree.nodes[i].element_type != "heading") {
+					Diag("error", "prune-section-not-heading", "-dcs-prune: section needs a heading",
+					     prune->second.decl->pos);
+				} else {
+					auto extent = SectionExtent(tree, i);
+					mark(i, extent.back() + 1, i, prune->second);
+					continue;
+				}
+			}
+			auto dedupe = props.find("-dcs-dedupe");
+			if (dedupe != props.end() && Trim(dedupe->second.decl->value_text) == "text") {
+				auto text = tree.Text(i);
+				if (!seen_texts.insert(text).second) {
+					mark(i, tree.nodes[i].subtree_end, i, dedupe->second);
+				}
+			}
+		}
+		return drop;
+	}
+
 	static string Trim(const string &s) {
 		auto b = s.find_first_not_of(" \t\r\n");
 		if (b == string::npos) {
@@ -304,15 +361,28 @@ ApplyResult Apply(const Value &list, const BlockFields &fields, const LogicalTyp
 		after1.nodes[i].attributes = attrs[i];
 	}
 	engine.Attributes(after1, attrs);
+	auto drop = engine.Prune(after1);
+	bool any_dropped = std::find(drop.begin(), drop.end(), true) != drop.end();
 
 	auto &items = ListValue::GetChildren(list);
 	auto &attr_type = StructType::GetChildType(block_type, fields.attributes);
+	int32_t next_order = 0;
 	for (idx_t i = 0; i < items.size(); i++) {
-		if (items[i].IsNull() || attrs[i] == tree.nodes[i].attributes) {
+		if (drop[i]) {
+			continue;
+		}
+		int32_t order = next_order++;
+		bool same_attrs = attrs[i] == tree.nodes[i].attributes;
+		if (items[i].IsNull() || (same_attrs && !any_dropped)) {
 			engine.result.blocks.push_back(items[i]);
 			continue;
 		}
 		auto children = StructValue::GetChildren(items[i]);
+		children[fields.element_order] = Value::INTEGER(order);
+		if (same_attrs) {
+			engine.result.blocks.push_back(Value::STRUCT(block_type, std::move(children)));
+			continue;
+		}
 		vector<Value> keys, values;
 		for (auto &kv : attrs[i]) {
 			keys.emplace_back(kv.first);
