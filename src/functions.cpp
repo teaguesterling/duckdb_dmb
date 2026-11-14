@@ -2,6 +2,7 @@
 #include "sheet.hpp"
 #include "block_tree.hpp"
 #include "matcher.hpp"
+#include "apply.hpp"
 
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/function/scalar_function.hpp"
@@ -142,6 +143,76 @@ void SelectFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// dcs_apply(blocks, sheet [, strict]): the new blocks
+// ---------------------------------------------------------------------------
+
+struct ApplyBindData : public FunctionData {
+	BlockFields fields;
+	LogicalType block_type;
+	ApplyBindData(BlockFields f, LogicalType t) : fields(f), block_type(std::move(t)) {
+	}
+	unique_ptr<FunctionData> Copy() const override {
+		return make_uniq<ApplyBindData>(fields, block_type);
+	}
+	bool Equals(const FunctionData &other) const override {
+		return block_type == other.Cast<ApplyBindData>().block_type;
+	}
+};
+
+void ApplyResolveTypes(ResolveScalarFunctionTypesInput &input) {
+	auto &type = input.GetArgumentType(0);
+	if (type.id() == LogicalTypeId::SQLNULL || type.id() == LogicalTypeId::UNKNOWN) {
+		input.GetBoundFunction().SetReturnType(type);
+		return;
+	}
+	ResolveBlockFields(type, "dcs_apply");
+	input.GetBoundFunction().GetArguments()[0] = type;
+	input.GetBoundFunction().SetReturnType(type);
+}
+
+unique_ptr<FunctionData> ApplyBind(BindScalarFunctionInput &input) {
+	auto &type = input.GetBoundFunction().GetArguments()[0];
+	if (type.id() != LogicalTypeId::LIST) {
+		return make_uniq<ApplyBindData>(BlockFields {}, LogicalType::SQLNULL);
+	}
+	return make_uniq<ApplyBindData>(ResolveBlockFields(type, "dcs_apply"), ListType::GetChildType(type));
+}
+
+[[noreturn]] void ThrowDiagnostic(const string &function_name, const Diagnostic &d) {
+	throw InvalidInputException("%s: %s at line %d, column %d: %s", function_name, d.code, d.pos.line, d.pos.column,
+	                            d.message);
+}
+
+void ApplyFun(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto &func = state.expr.Cast<BoundFunctionExpression>();
+	auto &bind = func.BindInfo()->Cast<ApplyBindData>();
+	string cached_text;
+	Sheet cached;
+	bool have_cache = false;
+	for (idx_t row = 0; row < args.size(); row++) {
+		auto blocks = args.data[0].GetValue(row);
+		auto sheet_text = args.data[1].GetValue(row);
+		bool strict = args.ColumnCount() > 2 && !args.data[2].GetValue(row).IsNull() &&
+		              args.data[2].GetValue(row).GetValue<bool>();
+		if (blocks.IsNull() || sheet_text.IsNull()) {
+			result.SetValue(row, Value(result.GetType()));
+			continue;
+		}
+		auto text = sheet_text.ToString();
+		if (!have_cache || text != cached_text) {
+			cached = ParseSheet(text);
+			cached_text = text;
+			have_cache = true;
+		}
+		auto applied = Apply(blocks, bind.fields, bind.block_type, cached);
+		if (strict && !applied.diagnostics.empty()) {
+			ThrowDiagnostic("dcs_apply", applied.diagnostics[0]);
+		}
+		result.SetValue(row, Value::LIST(bind.block_type, std::move(applied.blocks)));
+	}
+}
+
 } // namespace
 
 void RegisterFunctions(ExtensionLoader &loader) {
@@ -154,6 +225,20 @@ void RegisterFunctions(ExtensionLoader &loader) {
 	select.SetBindCallback(SelectBind);
 	select.SetFallible();
 	loader.RegisterFunction(select);
+
+	ScalarFunctionSet apply("dcs_apply");
+	for (auto with_strict : {false, true}) {
+		vector<LogicalType> arguments {LogicalType::ANY, LogicalType::VARCHAR};
+		if (with_strict) {
+			arguments.push_back(LogicalType::BOOLEAN);
+		}
+		ScalarFunction fn("dcs_apply", arguments, LogicalType::ANY, ApplyFun);
+		fn.SetResolveTypesCallback(ApplyResolveTypes);
+		fn.SetBindCallback(ApplyBind);
+		fn.SetFallible();
+		apply.AddFunction(fn);
+	}
+	loader.RegisterFunction(apply);
 }
 
 } // namespace dmb

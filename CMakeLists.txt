@@ -25,6 +25,8 @@ set(EXTENSION_SOURCES
     src/selector.cpp
     src/block_tree.cpp
     src/matcher.cpp
+    src/values.cpp
+    src/apply.cpp
     ${TREE_SITTER_SOURCES})
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
