@@ -53,7 +53,7 @@ SELECT o, a['id'] FROM applied('heading { -dcs-id: auto; }') WHERE t = 'heading'
 3	comments
 11	end
 
-# auto de-duplicates within the document (D6). The readers do not: dmb adds -1, -2 where they repeat.
+# auto de-duplicates within the document, as pandoc does (measured: Notes, Notes -> notes, notes-1).
 query II
 SELECT u.element_order, u.attributes['id'] FROM (SELECT unnest(dcs_apply([
   b('block', 'heading', 'Notes', 1, MAP {'heading_level': '2'}, 0),
@@ -63,29 +63,59 @@ SELECT u.element_order, u.attributes['id'] FROM (SELECT unnest(dcs_apply([
 0	notes
 1	notes-1
 
-# slug is the readers' own rule, byte for byte: duckdb_markdown's GenerateSectionId (fc9bbe0),
-# which webbed also uses (Teague, 2026-11-13: "Match the readers"). ASCII lower-case; every byte
-# outside [a-z0-9_-] becomes '-'; runs of '-' collapse; leading and trailing '-' go. So
-# non-ASCII letters are lost, as in the readers (Review Focus 2).
-query I
-SELECT a['x'] FROM applied('paragraph { --x: slug("Zoë''s notes"); }') WHERE o = 1;
-----
-zo-s-notes
+# slug() is pandoc's auto_identifiers rule (Teague, 2026-11-14: "Pandoc's rule, everywhere";
+# duckdb_markdown#111). Every expected value below was MEASURED with pandoc 3.1.3 on longbottom,
+# `pandoc -f markdown-smart -t html` (smart punctuation off, so the heading text is the plain
+# text dmb sees). The rule: lower-case across Unicode; keep letters, numbers, whitespace, _ - and .;
+# join whitespace-separated words with '-'; drop everything before the first letter; empty -> section.
+# test/differential/slug_pandoc.sh re-runs this comparison against pandoc itself.
+statement ok
+CREATE TABLE slug_cases AS SELECT * FROM (VALUES
+  (0, 'Zoë''s notes'),
+  (1, 'Café'),
+  (2, '  Hello,  World -- 2026! '),
+  (3, 'snake_case Field guide'),
+  (4, '1. Introduction'),
+  (5, 'ÉCOLE Ünd'),
+  (6, 'a -- b'),
+  (7, '!!!'),
+  (8, '日本語の見出し'),
+  (9, 'v1.2 release'),
+  (10, 'Field guide'),
+  (11, 'Ünïcödé — dash'),
+  (12, 'tab	separated'),
+  (13, 'x²'),
+  (14, 'İstanbul'),
+  (15, 'naïve café')
+) t(i, heading);
 
-query I
-SELECT a['x'] FROM applied('paragraph { --x: slug("Café"); }') WHERE o = 1;
+query II
+SELECT c.i, list_transform(dcs_apply([b('block', 'heading', c.heading, 1, MAP {'heading_level': '2'}, 0)],
+    'heading { -dcs-id: auto; }'), lambda x: x.attributes['id'])[1]
+FROM slug_cases c ORDER BY c.i;
 ----
-caf
+0	zoës-notes
+1	café
+2	hello-world----2026
+3	snake_case-field-guide
+4	introduction
+5	école-ünd
+6	a----b
+7	section
+8	日本語の見出し
+9	v1.2-release
+10	field-guide
+11	ünïcödé-dash
+12	tab-separated
+13	x²
+14	istanbul
+15	naïve-café
 
+# slug() as a function gives the same rule.
 query I
-SELECT a['x'] FROM applied('paragraph { --x: slug("  Hello,  World -- 2026! "); }') WHERE o = 1;
+SELECT a['x'] FROM applied('paragraph { --x: slug("1. Café, naïve!"); }') WHERE o = 1;
 ----
-hello-world-2026
-
-query I
-SELECT a['x'] FROM applied('paragraph { --x: slug("snake_case Field guide"); }') WHERE o = 1;
-----
-snake_case-field-guide
+café-naïve
 
 # -dcs-class adds and removes, keeping the existing order.
 query I

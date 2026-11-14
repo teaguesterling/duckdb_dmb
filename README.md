@@ -149,18 +149,26 @@ the diagnostics as rows; until then, they show only in strict mode.
 
 ## Ids and slugs
 
-**The slug rule is changing.** Today `slug()` and `-dcs-id: auto` copy duckdb_markdown's
-`GenerateSectionId` (fc9bbe0): ASCII lower-case, and any other byte becomes `-`. So `Café` gives
-`caf`. On 2026-11-14 Teague chose pandoc's `auto_identifiers` rule for every reader and for dmb.
-That rule keeps letters of any script (`café`). This section changes when dmb adopts it.
+`slug()` and `-dcs-id: auto` use pandoc's `auto_identifiers` rule, the rule every duck_blocks
+reader is moving to (duckdb_markdown#111):
 
-Two differences from the readers remain:
+- Lower-case across all of Unicode, and keep letters of any script: `ÉCOLE Ünd` → `école-ünd`.
+- Keep letters, numbers, `_`, `-` and `.`. Drop other characters: `Zoë's notes` → `zoës-notes`.
+- Join whitespace-separated words with `-`: `a -- b` → `a----b`.
+- Drop everything before the first letter: `1. Introduction` → `introduction`.
+- If nothing is left, the id is `section`.
 
-- `-dcs-id` de-duplicates ids in a document: a second `notes` becomes `notes-1`. The readers do
-  not de-duplicate.
-- read_html_blocks gives `.x` selectors classes only when you read with
-  `capture_attributes := 'classes'` (or `'*'`). Its default captures `id`, `name`, `href` and
-  `src` only.
+`-dcs-id: auto` also de-duplicates in a document: a second `notes` becomes `notes-1`, as in
+pandoc. A reader that does not de-duplicate gives repeats the same id. An ASCII form,
+`slug(v, ascii)` giving Punycode, is planned but not built.
+
+`test/differential/slug_pandoc.sh` compares dmb with pandoc on the headings in
+`test/differential/slug_cases.txt`. It needs `pandoc` on the PATH. On 2026-11-14, all 27 headings
+matched pandoc 3.1.3.
+
+read_html_blocks gives `.x` selectors classes only when you read with
+`capture_attributes := 'classes'` (or `'*'`). Its default captures `id`, `name`, `href` and `src`
+only.
 
 ## How it works
 

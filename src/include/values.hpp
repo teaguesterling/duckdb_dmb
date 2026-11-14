@@ -18,7 +18,7 @@ struct Token {
 //! Tokenize a value. False (with `error` set) on an unterminated string or unbalanced parens.
 bool TokenizeValue(const string &text, vector<Token> &out, string &error);
 
-//! The shared slug rule: duckdb_markdown's GenerateSectionId, byte for byte (the readers' rule).
+//! The shared slug rule: pandoc's auto_identifiers (an empty result is "section"), without de-duplication.
 string Slug(const string &text);
 
 //! Evaluates values against one block: strings concatenate; attr(x), text(), slug(v), url().

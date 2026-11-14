@@ -136,6 +136,20 @@ So ids differ by reader. That's filed as duckdb_markdown#111, duckdb_webbed#275 
 duckdb_panduck#182 (all filed with Teague's go). `-dcs-id` stays for whatever the readers leave
 out, and `-dcs-id: auto` means "the shared slug rule, only where no id exists".
 
+**The shared slug rule is pandoc's `auto_identifiers`** (Teague, 2026-11-14: "Pandoc's rule,
+everywhere", for markdown, webbed, panduck and dmb; recorded on duckdb_markdown#111). This amends
+the approved spec, which named the rule but did not define it:
+- lower-case across all of Unicode, and keep letters of any script (`ÉCOLE Ünd` → `école-ünd`);
+- keep letters, numbers, `_`, `-` and `.`, and drop other characters, combining marks included;
+- join whitespace-separated words with `-` (`a -- b` → `a----b`, on plain text);
+- drop everything before the first letter (`1. Introduction` → `introduction`);
+- an empty result is `section`.
+
+`-dcs-id: auto` also de-duplicates within a document (`notes`, `notes-1`), as pandoc does. A
+reader that doesn't is the one that differs. `slug(v, ascii)`, giving Punycode, is decided but not
+yet built. dmb checks its rule against pandoc 3.1.3 with `test/differential/slug_pandoc.sh`
+(27 of 27 headings agree, measured 2026-11-14).
+
 **Setting fields and attributes, the CSS way:**
 
 | What | Property | Example |

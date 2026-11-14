@@ -1,5 +1,7 @@
 #include "values.hpp"
 
+#include "utf8proc.hpp"
+
 
 namespace duckdb {
 namespace dmb {
@@ -136,32 +138,51 @@ bool TokenizeValue(const string &text, vector<Token> &out, string &error) {
 }
 
 string Slug(const string &text) {
-	// duckdb_markdown's GenerateSectionId (src/markdown_utils.cpp, fc9bbe0), byte for byte and
-	// without its duplicate counter: the readers' own rule, so dmb's ids match theirs (Teague,
-	// 2026-11-13). ASCII lower-case; any byte outside [a-z0-9_-] becomes '-'; runs of '-'
-	// collapse; leading and trailing '-' are trimmed. Non-ASCII bytes become '-', as there.
+	// pandoc's auto_identifiers rule (Teague, 2026-11-14; duckdb_markdown#111), as measured
+	// against pandoc 3.1.3 (test/differential/slug_pandoc.sh):
+	//   lower-case across Unicode; keep letters, numbers, whitespace, '_', '-' and '.'; join
+	//   whitespace-separated words with '-'; drop everything before the first letter;
+	//   an empty result is "section". Haskell's isAlpha/isNumber exclude combining marks,
+	//   so marks are dropped too ("İ" lower-cases to "i" + U+0307, and the mark goes).
+	auto data = reinterpret_cast<const utf8proc_uint8_t *>(text.data());
+	auto len = static_cast<utf8proc_ssize_t>(text.size());
 	string out;
-	out.reserve(text.size());
-	bool prev_dash = false;
-	for (char raw : text) {
-		char c = (raw >= 'A' && raw <= 'Z') ? static_cast<char>(raw - 'A' + 'a') : raw;
-		bool keep = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_';
-		char oc = keep ? c : '-';
-		if (oc == '-') {
-			if (!prev_dash) {
-				out += '-';
-			}
-			prev_dash = true;
-		} else {
-			out += oc;
-			prev_dash = false;
+	bool pending_dash = false; // whitespace seen since the last kept character
+	bool seen_letter = false;
+	for (utf8proc_ssize_t pos = 0; pos < len;) {
+		utf8proc_int32_t cp;
+		auto n = utf8proc_iterate(data + pos, len - pos, &cp);
+		if (n <= 0) {
+			pos++;
+			continue;
 		}
+		pos += n;
+		cp = utf8proc_tolower(cp);
+		auto cat = utf8proc_category(cp);
+		bool letter = cat >= UTF8PROC_CATEGORY_LU && cat <= UTF8PROC_CATEGORY_LO;
+		bool number = cat >= UTF8PROC_CATEGORY_ND && cat <= UTF8PROC_CATEGORY_NO;
+		bool space = cat == UTF8PROC_CATEGORY_ZS || cp == '\t' || cp == '\n' || cp == '\r' || cp == '\f' ||
+		             cp == '\v';
+		if (space) {
+			pending_dash = seen_letter;
+			continue;
+		}
+		if (!(letter || number || cp == '_' || cp == '-' || cp == '.')) {
+			continue; // removed, and it does not split a word
+		}
+		if (!seen_letter && !letter) {
+			continue; // everything before the first letter is dropped
+		}
+		seen_letter = true;
+		if (pending_dash) {
+			out += '-';
+			pending_dash = false;
+		}
+		utf8proc_uint8_t buf[4];
+		auto w = utf8proc_encode_char(cp, buf);
+		out.append(reinterpret_cast<const char *>(buf), static_cast<size_t>(w));
 	}
-	auto b = out.find_first_not_of('-');
-	if (b == string::npos) {
-		return string();
-	}
-	return out.substr(b, out.find_last_not_of('-') - b + 1);
+	return out.empty() ? string("section") : out;
 }
 
 ValueEvaluator::ValueEvaluator(const BlockTree &tree_p) : tree(tree_p) {
