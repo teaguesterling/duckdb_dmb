@@ -247,8 +247,13 @@ bool Matcher::MatchSimple(const SimpleSelector &s, idx_t node) {
 	}
 	if (name == "has") {
 		for (auto &arg : s.args) {
-			for (idx_t j = 0; j < tree.nodes.size(); j++) {
-				if (j != node && !arg.compounds.empty() &&
+			// candidates: the subtree for ' ' and '>', the rest of the parent's subtree for '+' and '~'
+			idx_t end = n.subtree_end;
+			if (arg.leading == '+' || arg.leading == '~') {
+				end = n.parent >= 0 ? tree.nodes[n.parent].subtree_end : tree.nodes.size();
+			}
+			for (idx_t j = node + 1; j < end; j++) {
+				if (!arg.compounds.empty() &&
 				    MatchFrom(arg, arg.compounds.size() - 1, j, static_cast<int64_t>(node))) {
 					return true;
 				}

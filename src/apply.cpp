@@ -224,8 +224,17 @@ struct Engine {
 						if (is_null || v.empty()) {
 							a.erase("id");
 						} else {
-							a["id"] = v;
-							ids.insert(v);
+							// ids are unique in a document, however they were set (D6's -1, -2 rule)
+							auto own = a.find("id");
+							if (own != a.end() && own->second != v) {
+								ids.erase(own->second);
+							}
+							auto id = v;
+							for (int n = 1; ids.count(id) && !(own != a.end() && own->second == id); n++) {
+								id = v + "-" + std::to_string(n);
+							}
+							a["id"] = id;
+							ids.insert(id);
 						}
 					}
 				}
@@ -327,7 +336,7 @@ struct Engine {
 			auto dedupe = props.find("-dcs-dedupe");
 			if (dedupe != props.end() && Trim(dedupe->second.decl->value_text) == "text") {
 				auto text = tree.Text(i);
-				if (!seen_texts.insert(text).second) {
+				if (!text.empty() && !seen_texts.insert(text).second) {
 					mark(i, tree.nodes[i].subtree_end, i, dedupe->second);
 				}
 			}

@@ -48,6 +48,37 @@ vector<std::pair<uint32_t, uint32_t>> SplitTopLevel(const string &text) {
 	return chunks;
 }
 
+//! Remove /* ... */ comments outside strings.
+string StripComments(const string &s) {
+	string out;
+	for (size_t i = 0; i < s.size(); i++) {
+		char c = s[i];
+		if (c == '"' || c == '\'') {
+			size_t j = i + 1;
+			while (j < s.size() && s[j] != c) {
+				j += s[j] == '\\' ? 2 : 1;
+			}
+			out.append(s, i, MinValue<size_t>(j, s.size() - 1) - i + 1);
+			i = j;
+		} else if (c == '/' && i + 1 < s.size() && s[i + 1] == '*') {
+			auto end = s.find("*/", i + 2);
+			i = end == string::npos ? s.size() : end + 1;
+			out += ' ';
+		} else {
+			out += c;
+		}
+	}
+	return out;
+}
+
+string TrimBoth(const string &s) {
+	auto b = s.find_first_not_of(" \t\r\n");
+	if (b == string::npos) {
+		return string();
+	}
+	return s.substr(b, s.find_last_not_of(" \t\r\n") - b + 1);
+}
+
 bool Blank(const string &s) {
 	return s.find_first_not_of(" \t\r\n") == string::npos;
 }
@@ -122,7 +153,7 @@ struct Builder {
 			ctx.Diag("error", "syntax", "cannot parse declaration " + ctx.Text(decl), decl);
 			return false;
 		}
-		out.value_text = Trim(ctx.src.substr(vstart, vend > vstart ? vend - vstart : 0));
+		out.value_text = TrimBoth(StripComments(ctx.src.substr(vstart, vend > vstart ? vend - vstart : 0)));
 		if (out.value_text.empty()) {
 			ctx.Diag("error", "empty-value", "declaration has no value: " + ctx.Text(decl), decl);
 			return false;
@@ -198,7 +229,12 @@ struct Builder {
 				    Diagnostic {"error", "empty-value", "declaration has no value: " + Trim40(Trim(piece)), pos});
 				continue;
 			}
-			d.value_text = value;
+			d.value_text = TrimBoth(StripComments(value));
+			if (d.value_text.empty()) {
+				ctx.diagnostics.push_back(
+				    Diagnostic {"error", "empty-value", "declaration has no value: " + Trim40(Trim(piece)), pos});
+				continue;
+			}
 			d.pos = pos;
 			d.order = decl_order++;
 			decls.push_back(std::move(d));

@@ -112,12 +112,13 @@ SELECT o, a['x'] FROM applied('p { --x: "a"; } .note { --x: "b"; } p { --x: "c";
 
 # Match once, after phase 1 (spec, "The cascade"): phase 1 (-dcs-id, -dcs-class) matches the
 # input; every other property matches the document after phase 1, so it sees those ids and classes.
+# Ids are unique (review I3), so the second h2 gets z-1 and #z reaches only the first.
 query II
 SELECT o, a['hit'] FROM applied('h2 { -dcs-id: "z"; } #z { --hit: "y"; }') WHERE t = 'heading' ORDER BY o;
 ----
 0	NULL
 3	y
-11	y
+11	NULL
 
 query II
 SELECT o, a['hit'] FROM applied('h2 { -dcs-class: +k; } .k { --hit: "y"; }') WHERE t = 'heading' ORDER BY o;

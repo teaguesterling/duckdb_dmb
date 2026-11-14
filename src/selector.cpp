@@ -3,6 +3,9 @@
 #include "re2/re2.h"
 
 #include <algorithm>
+#include <cerrno>
+#include <climits>
+#include <cstdlib>
 #include <set>
 
 namespace duckdb {
@@ -168,7 +171,13 @@ static bool ParseNth(const string &raw, int32_t &a, int32_t &b) {
 				return false;
 			}
 		}
-		v = std::stoi(t);
+		errno = 0;
+		char *end = nullptr;
+		long parsed = std::strtol(t.c_str(), &end, 10);
+		if (errno == ERANGE || parsed > INT32_MAX || parsed < INT32_MIN) {
+			return false; // reported as bad-nth, never thrown (ParseSheet must not throw)
+		}
+		v = static_cast<int32_t>(parsed);
 		return true;
 	};
 	auto n = s.find('n');

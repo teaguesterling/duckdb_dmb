@@ -19,14 +19,34 @@ BlockFields ResolveBlockFields(const LogicalType &type, const string &function_n
 		}
 		throw BinderException("%s: the block struct has no field '%s'", function_name, name);
 	};
+	auto check = [&](idx_t idx, const char *name, bool ok, const char *want) {
+		if (!ok) {
+			throw BinderException("%s: field '%s' must be %s, got %s", function_name, name, want,
+			                      StructType::GetChildType(child, idx).ToString());
+		}
+		return idx;
+	};
+	auto is_text = [&](idx_t idx) { return StructType::GetChildType(child, idx).id() == LogicalTypeId::VARCHAR; };
+	auto is_int = [&](idx_t idx) { return StructType::GetChildType(child, idx).IsIntegral(); };
 	BlockFields f;
-	f.kind = find("kind");
+	f.kind = check(find("kind"), "kind", true, "VARCHAR");
+	check(f.kind, "kind", is_text(f.kind), "VARCHAR");
 	f.element_type = find("element_type");
 	f.content = find("content");
 	f.level = find("level");
 	f.encoding = find("encoding");
 	f.attributes = find("attributes");
 	f.element_order = find("element_order");
+	check(f.element_type, "element_type", is_text(f.element_type), "VARCHAR");
+	check(f.content, "content", is_text(f.content), "VARCHAR");
+	check(f.encoding, "encoding", is_text(f.encoding), "VARCHAR");
+	check(f.level, "level", is_int(f.level), "an integer");
+	check(f.element_order, "element_order", is_int(f.element_order), "an integer");
+	auto &at = StructType::GetChildType(child, f.attributes);
+	check(f.attributes, "attributes",
+	      at.id() == LogicalTypeId::MAP && MapType::KeyType(at).id() == LogicalTypeId::VARCHAR &&
+	          MapType::ValueType(at).id() == LogicalTypeId::VARCHAR,
+	      "MAP(VARCHAR, VARCHAR)");
 	return f;
 }
 
@@ -96,19 +116,42 @@ bool BlockTree::Matchable(idx_t i) const {
 }
 
 string BlockTree::Text(idx_t i) const {
-	auto &n = nodes[i];
-	if (n.element_type == TYPE_HEADING && !n.content.empty()) {
-		return n.content;
-	}
+	// The block's text content, in document order: inline rows' content, the content of leaf
+	// blocks (a tight list_item keeps its text in content, with no inline children), and a
+	// heading's flattened title in place of its inline children. Text from different blocks is
+	// joined with a newline, so ":contains" never matches across a block boundary.
 	string text;
-	bool any_inline = false;
-	for (idx_t j = i + 1; j < n.subtree_end; j++) {
-		if (nodes[j].kind == KIND_INLINE) {
-			text += nodes[j].content;
-			any_inline = true;
+	int64_t last_block = -1;
+	auto append = [&](const string &piece, int64_t owner) {
+		if (piece.empty()) {
+			return;
 		}
+		if (!text.empty() && owner != last_block) {
+			text += '\n';
+		}
+		text += piece;
+		last_block = owner;
+	};
+	int64_t owner = static_cast<int64_t>(i);
+	for (idx_t j = i; j < nodes[i].subtree_end;) {
+		auto &n = nodes[j];
+		if (n.kind == KIND_INLINE) {
+			append(n.content, owner);
+			j++;
+			continue;
+		}
+		owner = static_cast<int64_t>(j);
+		if (n.element_type == TYPE_HEADING && !n.content.empty()) {
+			append(n.content, owner);
+			j = n.subtree_end; // its inline children only restate the flattened title
+			continue;
+		}
+		if (n.subtree_end == j + 1) {
+			append(n.content, owner);
+		}
+		j++;
 	}
-	return any_inline ? text : n.content;
+	return text;
 }
 
 vector<string> BlockTree::Classes(idx_t i) const {
