@@ -1,0 +1,42 @@
+#define DUCKDB_EXTENSION_MAIN
+
+#include "dmb_extension.hpp"
+#include "duckdb.hpp"
+#include "duckdb/function/scalar_function.hpp"
+
+namespace duckdb {
+
+static constexpr const char *DMB_VERSION = "0.1.0";
+
+static void VersionFun(DataChunk &args, ExpressionState &state, Vector &result) {
+	result.Reference(Value(DMB_VERSION), count_t(args.size()));
+}
+
+static void LoadInternal(ExtensionLoader &loader) {
+	loader.RegisterFunction(ScalarFunction("dcs_version", {}, LogicalType::VARCHAR, VersionFun));
+}
+
+void DmbExtension::Load(ExtensionLoader &loader) {
+	LoadInternal(loader);
+}
+
+std::string DmbExtension::Name() {
+	return "dmb";
+}
+
+std::string DmbExtension::Version() const {
+#ifdef EXT_VERSION_DMB
+	return EXT_VERSION_DMB;
+#else
+	return "";
+#endif
+}
+
+} // namespace duckdb
+
+extern "C" {
+
+DUCKDB_CPP_EXTENSION_ENTRY(dmb, loader) {
+	duckdb::LoadInternal(loader);
+}
+}

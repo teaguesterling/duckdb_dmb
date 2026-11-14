@@ -1,0 +1,10 @@
+# name: test/sql/dmb.test
+# description: the dmb extension loads and reports its version
+# group: [sql]
+
+require dmb
+
+query I
+SELECT dcs_version();
+----
+0.1.0
