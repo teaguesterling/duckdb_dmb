@@ -23,6 +23,8 @@ set(EXTENSION_SOURCES
     src/functions.cpp
     src/sheet_parser.cpp
     src/selector.cpp
+    src/block_tree.cpp
+    src/matcher.cpp
     ${TREE_SITTER_SOURCES})
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})

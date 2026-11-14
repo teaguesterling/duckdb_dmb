@@ -1,7 +1,11 @@
 #include "functions.hpp"
 #include "sheet.hpp"
+#include "block_tree.hpp"
+#include "matcher.hpp"
 
 #include "duckdb/function/table_function.hpp"
+#include "duckdb/function/scalar_function.hpp"
+#include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 
 namespace duckdb {
@@ -70,11 +74,86 @@ void RulesScan(ClientContext &, TableFunctionInput &data, DataChunk &output) {
 	output.SetChildCardinality(count);
 }
 
+// ---------------------------------------------------------------------------
+// dcs_select(blocks, selector): the element_orders of the blocks the selector matches
+// ---------------------------------------------------------------------------
+
+struct SelectBindData : public FunctionData {
+	BlockFields fields;
+	explicit SelectBindData(BlockFields f) : fields(f) {
+	}
+	unique_ptr<FunctionData> Copy() const override {
+		return make_uniq<SelectBindData>(fields);
+	}
+	bool Equals(const FunctionData &other) const override {
+		return true;
+	}
+};
+
+void SelectResolveTypes(ResolveScalarFunctionTypesInput &input) {
+	auto &type = input.GetArgumentType(0);
+	if (type.id() == LogicalTypeId::SQLNULL || type.id() == LogicalTypeId::UNKNOWN) {
+		return;
+	}
+	ResolveBlockFields(type, "dcs_select");
+	input.GetBoundFunction().GetArguments()[0] = type;
+}
+
+unique_ptr<FunctionData> SelectBind(BindScalarFunctionInput &input) {
+	auto &type = input.GetBoundFunction().GetArguments()[0];
+	if (type.id() != LogicalTypeId::LIST) {
+		return make_uniq<SelectBindData>(BlockFields {});
+	}
+	return make_uniq<SelectBindData>(ResolveBlockFields(type, "dcs_select"));
+}
+
+//! Compile a selector for a SQL caller: refuse it by name rather than match nothing.
+ComplexSelector CompileOrThrow(const string &text, const string &function_name) {
+	ComplexSelector sel;
+	string pe;
+	vector<Diagnostic> diags;
+	if (!CompileSelectorText(text, sel, pe, diags, SourcePos {1, 1}) || !pe.empty()) {
+		string message = diags.empty() ? "a pseudo-element can't be selected" : diags[0].message;
+		throw InvalidInputException("%s: %s", function_name, message);
+	}
+	return sel;
+}
+
+void SelectFun(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto &func = state.expr.Cast<BoundFunctionExpression>();
+	auto &bind = func.BindInfo()->Cast<SelectBindData>();
+	for (idx_t row = 0; row < args.size(); row++) {
+		auto blocks = args.data[0].GetValue(row);
+		auto selector = args.data[1].GetValue(row);
+		if (blocks.IsNull() || selector.IsNull()) {
+			result.SetValue(row, Value(result.GetType()));
+			continue;
+		}
+		auto sel = CompileOrThrow(selector.ToString(), "dcs_select");
+		auto tree = BlockTree::FromList(blocks, bind.fields);
+		Matcher matcher(tree);
+		vector<Value> hits;
+		for (idx_t i = 0; i < tree.nodes.size(); i++) {
+			if (matcher.Matches(sel, i)) {
+				hits.push_back(Value::INTEGER(tree.nodes[i].element_order));
+			}
+		}
+		result.SetValue(row, Value::LIST(LogicalType::INTEGER, std::move(hits)));
+	}
+}
+
 } // namespace
 
 void RegisterFunctions(ExtensionLoader &loader) {
 	TableFunction rules("dcs_rules", {LogicalType::VARCHAR}, RulesScan, RulesBind, RulesInit);
 	loader.RegisterFunction(rules);
+
+	ScalarFunction select("dcs_select", {LogicalType::ANY, LogicalType::VARCHAR},
+	                      LogicalType::LIST(LogicalType::INTEGER), SelectFun);
+	select.SetResolveTypesCallback(SelectResolveTypes);
+	select.SetBindCallback(SelectBind);
+	select.SetFallible();
+	loader.RegisterFunction(select);
 }
 
 } // namespace dmb

@@ -1,5 +1,7 @@
 #include "css_tree.hpp"
 
+#include "re2/re2.h"
+
 #include <algorithm>
 #include <set>
 
@@ -262,6 +264,13 @@ static bool CompilePseudoClass(TsCtx &ctx, TSNode node, TSNode name_node, TSNode
 			return false;
 		}
 		simple.text_arg = Unquote(InnerArgs(ctx, *args));
+		if (name == "matches") {
+			duckdb_re2::RE2 re(simple.text_arg, duckdb_re2::RE2::Quiet);
+			if (!re.ok()) {
+				ctx.Diag("error", "bad-regex", ":matches(): " + re.error(), node);
+				return false;
+			}
+		}
 		return true;
 	}
 	if (NthPseudo().count(name)) {
