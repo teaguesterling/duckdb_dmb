@@ -1,0 +1,33 @@
+# name: test/sql/dcs_slug_conformance.test
+# description: -dcs-id: auto agrees with pandoc on the fixture all four duck_blocks implementations share
+# group: [sql]
+
+require dmb
+
+# test/data/slug_pandoc_cases.txt is byte-identical to the copy in duckdb_markdown (7aecd96,
+# feat(ids) #111) and in duckdb_webbed: sha256 a07f283aceebd42588ece0c2f0cc30b6071821506da623147fb468cdbc02e944.
+# Each line is `title \x01 pandoc-id`, measured with `pandoc -f markdown-smart`, one document per
+# heading. Don't edit it here: change it upstream and copy it, so all four check one list.
+
+statement ok
+CREATE TABLE cases AS SELECT row_number() OVER () AS n, title, pandoc_id
+FROM read_csv('test/data/slug_pandoc_cases.txt', header := false, delim := chr(1), quote := '', escape := '',
+              columns := {'title': 'VARCHAR', 'pandoc_id': 'VARCHAR'}, strict_mode := false);
+
+statement ok
+CREATE TABLE got AS SELECT n, title, pandoc_id,
+    dcs_apply([{'kind': 'block', 'element_type': 'heading', 'content': title, 'level': 1, 'encoding': 'text',
+                'attributes': MAP {'heading_level': '1'}, 'element_order': 0}],
+              'heading { -dcs-id: auto; }')[1].attributes['id'] AS dmb_id
+FROM cases;
+
+# Positive evidence first: every line of the fixture was read and compared.
+query I
+SELECT count(*) FROM got WHERE dmb_id IS NOT NULL;
+----
+41
+
+# Then the comparison itself: no heading where dmb and pandoc disagree.
+query III
+SELECT n, title, dmb_id FROM got WHERE dmb_id IS DISTINCT FROM pandoc_id ORDER BY n;
+----
