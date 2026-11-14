@@ -25,3 +25,9 @@ under_score.and.dots
 CamelCase_Word
 3.14 is pi
 Ⅻ roman twelve
+A — B
+« Quoted »
+full　width　space
+١٢٣ Arabic
+Ⅻ Roman
+Version 1.2 notes
