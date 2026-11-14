@@ -3,6 +3,9 @@
 #include "dmb_extension.hpp"
 #include "duckdb.hpp"
 #include "duckdb/function/scalar_function.hpp"
+#include "tree_sitter/api.h"
+
+extern "C" const TSLanguage *tree_sitter_css(void);
 
 namespace duckdb {
 
@@ -12,8 +15,14 @@ static void VersionFun(DataChunk &args, ExpressionState &state, Vector &result) 
 	result.Reference(Value(DMB_VERSION), count_t(args.size()));
 }
 
+static void ParserAbiFun(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto abi = static_cast<int32_t>(ts_language_abi_version(tree_sitter_css()));
+	result.Reference(Value::INTEGER(abi), count_t(args.size()));
+}
+
 static void LoadInternal(ExtensionLoader &loader) {
 	loader.RegisterFunction(ScalarFunction("dcs_version", {}, LogicalType::VARCHAR, VersionFun));
+	loader.RegisterFunction(ScalarFunction("dcs_parser_abi", {}, LogicalType::INTEGER, ParserAbiFun));
 }
 
 void DmbExtension::Load(ExtensionLoader &loader) {

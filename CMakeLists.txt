@@ -5,11 +5,22 @@ set(TARGET_NAME dmb)
 set(EXTENSION_NAME ${TARGET_NAME}_extension)
 set(LOADABLE_EXTENSION_NAME ${TARGET_NAME}_loadable_extension)
 
-project(${TARGET_NAME})
+project(${TARGET_NAME} C CXX)
 include_directories(src/include)
 
+# Vendored tree-sitter runtime (submodule, sitting_duck's pin) and the generated
+# tree-sitter-css parser. See third_party/tree-sitter-css/PROVENANCE.md.
+include_directories(third_party/tree-sitter/lib/include)
+set(TREE_SITTER_SOURCES
+    third_party/tree-sitter/lib/src/lib.c
+    third_party/tree-sitter-css/src/parser.c
+    third_party/tree-sitter-css/src/scanner.c)
+set_source_files_properties(${TREE_SITTER_SOURCES} PROPERTIES
+    INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/tree-sitter/lib/src;${CMAKE_CURRENT_SOURCE_DIR}/third_party/tree-sitter-css/src")
+
 set(EXTENSION_SOURCES
-    src/dmb_extension.cpp)
+    src/dmb_extension.cpp
+    ${TREE_SITTER_SOURCES})
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})

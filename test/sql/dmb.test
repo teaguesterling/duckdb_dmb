@@ -8,3 +8,10 @@ query I
 SELECT dcs_version();
 ----
 0.1.0
+
+# The vendored tree-sitter-css links, and its ABI is the one PROVENANCE.md records.
+# This is the canary for a grammar bump: update both together.
+query I
+SELECT dcs_parser_abi();
+----
+15
