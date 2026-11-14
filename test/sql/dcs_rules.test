@@ -1,0 +1,72 @@
+# name: test/sql/dcs_rules.test
+# description: dcs_rules(sheet) -- one row per (selector after list-splitting, declaration)
+# group: [sql]
+
+require dmb
+
+# A selector list becomes one rule per selector; both share the declaration's source order.
+query IIIIIIIIIII
+SELECT rule, selector, pseudo_element, property, value, important, specificity, "order", media, line, "column"
+FROM dcs_rules('h2, h3 { -dcs-id: slug(text()); }') ORDER BY rule;
+----
+0	h2	NULL	-dcs-id	slug(text())	false	[0, 0, 1]	0	NULL	1	10
+1	h3	NULL	-dcs-id	slug(text())	false	[0, 0, 1]	0	NULL	1	10
+
+# ::after is a pseudo-element: it counts as a type for specificity. Columns are code points:
+# "¶" is one, so -dcs-content-as is at 45 (its byte column is 46). The value is the
+# source text of the declaration, strings and functions included.
+query IIIIIII
+SELECT rule, selector, pseudo_element, property, value, specificity, "column"
+FROM dcs_rules('h2::after { content: " [¶](#" attr(id) ")"; -dcs-content-as: markdown; }') ORDER BY "order";
+----
+0	h2	after	content	" [¶](#" attr(id) ")"	[0, 0, 2]	13
+0	h2	after	-dcs-content-as	markdown	[0, 0, 2]	45
+
+# Columns count code points, not bytes (D5): "¶" is two bytes, so color's byte column is 20.
+query II
+SELECT property, "column" FROM dcs_rules('p { content: "¶"; color: red; }') ORDER BY "order";
+----
+content	5
+color	19
+
+# Specificity follows CSS: :not() takes its argument's; :section() is one pseudo-class.
+query II
+SELECT selector, specificity FROM dcs_rules('#intro { a: b; }
+:chrome { a: b; }
+p:not(.x) { a: b; }
+div[class*=sidebar] ~ p { a: b; }
+:section(h2:contains("x")) > p { a: b; }
+* { a: b; }') ORDER BY rule;
+----
+#intro	[1, 0, 0]
+:chrome	[0, 1, 0]
+p:not(.x)	[0, 1, 1]
+div[class*=sidebar] ~ p	[0, 1, 2]
+:section(h2:contains("x")) > p	[0, 1, 1]
+*	[0, 0, 0]
+
+# Values come from source bytes, not tree-sitter's parse of them (D4).
+query I
+SELECT value FROM dcs_rules('p { -dcs-class: +note -draft; }');
+----
++note -draft
+
+query II
+SELECT selector, media FROM dcs_rules('@media (format: html) { h1 { color: red; } }');
+----
+h1	html
+
+query II
+SELECT value, important FROM dcs_rules('p { color: red !important; }');
+----
+red	true
+
+query I
+SELECT count(*) FROM dcs_rules('');
+----
+0
+
+query I
+SELECT count(*) FROM dcs_rules(NULL);
+----
+0

@@ -1,6 +1,7 @@
 #define DUCKDB_EXTENSION_MAIN
 
 #include "dmb_extension.hpp"
+#include "functions.hpp"
 #include "duckdb.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "tree_sitter/api.h"
@@ -23,6 +24,7 @@ static void ParserAbiFun(DataChunk &args, ExpressionState &state, Vector &result
 static void LoadInternal(ExtensionLoader &loader) {
 	loader.RegisterFunction(ScalarFunction("dcs_version", {}, LogicalType::VARCHAR, VersionFun));
 	loader.RegisterFunction(ScalarFunction("dcs_parser_abi", {}, LogicalType::INTEGER, ParserAbiFun));
+	dmb::RegisterFunctions(loader);
 }
 
 void DmbExtension::Load(ExtensionLoader &loader) {

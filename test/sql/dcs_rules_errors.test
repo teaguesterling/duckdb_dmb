@@ -1,0 +1,29 @@
+# name: test/sql/dcs_rules_errors.test
+# description: a broken rule must not take the rest of the sheet with it
+# group: [sql]
+
+require dmb
+
+# MEASURED 2026-11-13 (sitting_duck v1.18.3, the same tree-sitter-css v0.25.0 parser.c):
+# parsing this sheet in one piece leaves only `p` as a rule_set. The root becomes ERROR,
+# and `h1` and `h2` become ERROR fragments. The spec says errors never abort a document,
+# so dmb re-parses after a top-level error (Task 3 ruling). The rules after the broken
+# one must survive.
+query II
+SELECT selector, property FROM dcs_rules('p { a: b; }
+[x >= 2] { a: b; }
+h1 { c: d; }
+h2 { e: f; }') ORDER BY rule;
+----
+p	a
+h1	c
+h2	e
+
+# MEASURED 2026-11-13: tree-sitter-css turns a declaration whose string holds "{" into an
+# ERROR node. -dcs-replace takes regular expressions, where \d{3} is ordinary, so dmb
+# recovers `property: value` from the ERROR's source text (plan D4: values are source bytes).
+query IIII
+SELECT selector, property, value, "column" FROM dcs_rules('p { -dcs-replace: "\d{3}" "###"; color: red; }') ORDER BY "order";
+----
+p	-dcs-replace	"\d{3}" "###"	5
+p	color	red	34

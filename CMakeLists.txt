@@ -20,6 +20,9 @@ set_source_files_properties(${TREE_SITTER_SOURCES} PROPERTIES
 
 set(EXTENSION_SOURCES
     src/dmb_extension.cpp
+    src/functions.cpp
+    src/sheet_parser.cpp
+    src/selector.cpp
     ${TREE_SITTER_SOURCES})
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
