@@ -253,6 +253,44 @@ void RegisterFunctions(ExtensionLoader &loader) {
 	    "CASE WHEN b.attributes['dcs-as'] = 'table' THEN duck_blocks_parse_embedded([b])[1] ELSE b END)";
 	auto parsed_info = DefaultFunctionGenerator::CreateInternalMacroInfo(parsed);
 	loader.RegisterFunction(*parsed_info);
+
+	// D9: one wrapper per reader (a macro binds every function it names, so one combined
+	// wrapper would need every reader loaded). Each replaces the rows -dcs-content-as marked
+	// for its format with the reader's rows: a block mark takes the parsed blocks at its level;
+	// an inline mark takes the children of the parsed paragraph. Leading and trailing
+	// whitespace, which the readers drop, is kept as its own text row. element_order is
+	// renumbered. A document with no marks for this format comes back unchanged.
+	struct ReaderWrapper {
+		const char *name;
+		const char *format;
+		const char *reader;
+	};
+	static const ReaderWrapper WRAPPERS[] = {{"dcs_parse_markdown", "markdown", "parse_markdown_to_duck_blocks"},
+	                                         {"dcs_parse_html", "html", "html_to_duck_blocks"}};
+	for (auto &w : WRAPPERS) {
+		string mark = string("r.attributes['dcs-content-as'] = '") + w.format + "'";
+		string space_row = "struct_update(r, element_type := 'text', content := regexp_extract(r.content, '%s'), "
+		                   "attributes := MAP {}::MAP(VARCHAR, VARCHAR))";
+		auto lead = StringUtil::Format(space_row, "^\\s+");
+		auto trail = StringUtil::Format(space_row, "\\s+$");
+		string body =
+		    string("(blocks) AS CASE WHEN len(list_filter(blocks, lambda r: ") + mark +
+		    ")) = 0 THEN blocks ELSE list_transform(flatten(list_transform(blocks, lambda r: CASE WHEN " + mark +
+		    " THEN list_concat("
+		    "CASE WHEN r.kind = 'inline' AND regexp_matches(r.content, '^\\s') THEN [" + lead + "] ELSE [] END, "
+		    "list_transform(list_filter(" + w.reader + "(r.content), lambda p: r.kind = 'block' OR p.level >= 2), "
+		    "lambda p: struct_update(r, kind := p.kind, element_type := p.element_type, content := p.content, "
+		    "level := (r.level + p.level - CASE WHEN r.kind = 'inline' THEN 2 ELSE 1 END)::INTEGER, "
+		    "encoding := p.encoding, attributes := p.attributes)), "
+		    "CASE WHEN r.kind = 'inline' AND regexp_matches(r.content, '\\s$') THEN [" + trail + "] ELSE [] END) "
+		    "ELSE [r] END)), lambda x, i: struct_update(x, element_order := (i - 1)::INTEGER)) END";
+		DefaultMacro macro {};
+		macro.schema = DEFAULT_SCHEMA;
+		macro.name = w.name;
+		macro.macro_definition = body.c_str(); // parsed immediately; the string need not outlive the call
+		auto info = DefaultFunctionGenerator::CreateInternalMacroInfo(macro);
+		loader.RegisterFunction(*info);
+	}
 }
 
 } // namespace dmb
