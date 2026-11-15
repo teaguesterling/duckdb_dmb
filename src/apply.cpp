@@ -7,6 +7,7 @@
 #include "utf8proc.hpp"
 
 #include <algorithm>
+#include <functional>
 #include <set>
 #include <sstream>
 #include <unordered_map>
@@ -23,7 +24,7 @@ const std::set<string> &ReservedAttributes() {
 
 //! Properties the spec defines that later tasks implement. Diagnosed as not-yet, never silently dropped.
 const std::set<string> &LaterProperties() {
-	static const std::set<string> s {"text-overflow", "-dcs-link", "order"};
+	static const std::set<string> s {"text-overflow", "-dcs-link"};
 	return s;
 }
 
@@ -238,6 +239,30 @@ bool IsCustom(const string &p) {
 	return p.size() > 2 && p[0] == '-' && p[1] == '-';
 }
 
+//! Phase 7: any other CSS property is presentation, carried in attributes['style'].
+bool IsPresentation(const string &p) {
+	return !IsCustom(p) && p.compare(0, 5, "-dcs-") != 0 && !IsPhase1(p) && !IsPhase2(p) && !IsPhase3(p) &&
+	       !IsPhase4Element(p) && !IsPseudoProperty(p) && p != "order" && !LaterProperties().count(p);
+}
+
+//! A YAML double-quoted scalar.
+string YamlQuote(const string &v) {
+	string out = "\"";
+	for (char c : v) {
+		if (c == '"' || c == '\\') {
+			out += '\\';
+			out += c;
+		} else if (c == '\n') {
+			out += "\\n";
+		} else if (c == '\t') {
+			out += "\\t";
+		} else {
+			out += c;
+		}
+	}
+	return out + "\"";
+}
+
 struct Winner {
 	const Rule *rule = nullptr;
 	const Declaration *decl = nullptr;
@@ -381,13 +406,15 @@ struct Engine {
 					if (rule.pseudo_element.empty() && (p == "-dcs-content-as" || p == "-dcs-content-place")) {
 						Diag("warning", "pseudo-only", p + " applies to ::before and ::after content only", d.pos);
 					}
+				} else if (p == "order") {
+					if (!IsInteger(Trim(d.value_text))) {
+						Diag("error", "bad-value", "order takes an integer, not " + Trim(d.value_text), d.pos);
+					}
 				} else if (LaterProperties().count(p)) {
 					Diag("warning", "not-yet", p + " is not supported yet", d.pos);
 				} else if (p.compare(0, 5, "-dcs-") == 0) {
 					Diag("error", "unknown-property", "unknown property " + p, d.pos);
-				} else {
-					Diag("warning", "not-yet", "presentation property " + p + " is not supported yet", d.pos);
-				}
+				} // else phase 7: presentation, carried in attributes['style']
 				if (!rule.pseudo_element.empty() && !IsPseudoProperty(p)) {
 					Diag("warning", "not-yet",
 					     "::" + rule.pseudo_element + " takes content, -dcs-content-as and -dcs-content-place only; " + p +
@@ -876,6 +903,135 @@ struct Engine {
 		}
 	}
 
+	//! Phase 5: order: n, per block. 0 where unset or invalid.
+	vector<int64_t> OrderKeys(const BlockTree &tree, const vector<bool> &drop) {
+		vector<int64_t> keys(tree.nodes.size(), 0);
+		auto cascade = Cascade(tree, [](const string &p) { return p == "order"; });
+		for (idx_t i = 0; i < tree.nodes.size(); i++) {
+			auto it = cascade[i].find("order");
+			if (drop[i] || it == cascade[i].end()) {
+				continue;
+			}
+			auto v = Trim(it->second.decl->value_text);
+			if (IsInteger(v)) {
+				keys[i] = std::strtoll(v.c_str(), nullptr, 10);
+				if (keys[i] != 0) {
+					result.changes.push_back(Change {tree.nodes[i].element_order, it->second.rule->index, "order",
+					                                 Value("0"), Value(v)});
+				}
+			}
+		}
+		return keys;
+	}
+
+	//! Phase 7: presentation properties into attributes['style'], winners in source order,
+	//! after any style the block already had (so the sheet's declarations win).
+	void Style(const BlockTree &tree, vector<std::map<string, string>> &attrs, const vector<bool> &drop) {
+		auto cascade = Cascade(tree, IsPresentation);
+		for (idx_t i = 0; i < tree.nodes.size(); i++) {
+			if (drop[i] || cascade[i].empty()) {
+				continue;
+			}
+			vector<const Winner *> winners;
+			for (auto &kv : cascade[i]) {
+				winners.push_back(&kv.second);
+			}
+			std::sort(winners.begin(), winners.end(),
+			          [](const Winner *a, const Winner *b) { return a->decl->order < b->decl->order; });
+			string style;
+			for (auto w : winners) {
+				style += (style.empty() ? "" : "; ") + w->decl->property + ": " + Trim(w->decl->value_text);
+			}
+			auto &a = attrs[i];
+			auto before = OptStr(a, "style");
+			auto it = a.find("style");
+			a["style"] = it == a.end() || Trim(it->second).empty() ? style : Trim(it->second) + "; " + style;
+			result.changes.push_back(Change {tree.nodes[i].element_order, winners.back()->rule->index, "style", before,
+			                                 Value(a["style"])});
+		}
+	}
+
+	//! Phase 6: @frontmatter, evaluated against the document after phase 1. text(sel) is the text of
+	//! the first block sel matches; strings, words and url() as elsewhere. Gives "key: value" lines.
+	vector<std::pair<string, string>> Frontmatter(const BlockTree &tree) {
+		vector<std::pair<string, string>> lines;
+		ValueEvaluator eval(tree);
+		Matcher matcher(tree);
+		for (auto &d : sheet.frontmatter) {
+			vector<Token> tokens;
+			string error, value;
+			if (!TokenizeValue(d.value_text, tokens, error)) {
+				Diag("error", "bad-value", d.property + ": " + error, d.pos);
+				continue;
+			}
+			bool ok = true, prev_word = false;
+			for (auto &tok : tokens) {
+				string piece;
+				bool word = tok.kind == Token::IDENT || tok.kind == Token::NUMBER;
+				if (tok.kind == Token::FUNCTION && tok.text == "text") {
+					string sel_text;
+					for (auto &arg : tok.args) {
+						for (auto &t : arg) {
+							sel_text += (sel_text.empty() ? "" : " ") + t.text;
+						}
+					}
+					ComplexSelector sel;
+					string pe;
+					vector<Diagnostic> diags;
+					if (sel_text.empty() || !CompileSelectorText(sel_text, sel, pe, diags, d.pos) || !pe.empty()) {
+						Diag("error", "bad-value", d.property + ": text() in @frontmatter needs a selector", d.pos);
+						ok = false;
+						break;
+					}
+					try {
+						for (idx_t i = 0; i < tree.nodes.size(); i++) {
+							if (matcher.Matches(sel, i)) {
+								piece = tree.Text(i);
+								break;
+							}
+						}
+					} catch (NotImplementedException &e) {
+						Diag("warning", "not-yet", ErrorData(e).RawMessage(), d.pos);
+						ok = false;
+						break;
+					}
+				} else if (tok.kind == Token::FUNCTION && tok.text != "url") {
+					Diag("error", "unknown-function", d.property + ": " + tok.text + "() does not work in @frontmatter",
+					     d.pos);
+					ok = false;
+					break;
+				} else {
+					bool is_null = false;
+					if (!eval.Eval({tok}, 0, piece, is_null, error)) {
+						Diag("error", "bad-value", d.property + ": " + error, d.pos);
+						ok = false;
+						break;
+					}
+				}
+				if (word && prev_word) {
+					value += ' ';
+				}
+				value += piece;
+				prev_word = word;
+			}
+			if (!ok) {
+				continue;
+			}
+			for (auto &line : lines) {
+				if (line.first == d.property) {
+					line.second = YamlQuote(value); // a later declaration of the same key wins
+					ok = false;
+				}
+			}
+			if (ok) {
+				lines.emplace_back(d.property, YamlQuote(value));
+			}
+			result.changes.push_back(Change {0, -1, "@frontmatter " + d.property, Value(LogicalType::VARCHAR),
+			                                 Value(value)});
+		}
+		return lines;
+	}
+
 	static string Trim(const string &s) {
 		auto b = s.find_first_not_of(" \t\r\n");
 		if (b == string::npos) {
@@ -910,6 +1066,11 @@ ApplyResult Apply(const Value &list, const BlockFields &fields, const LogicalTyp
 	auto drop = engine.Prune(after1);
 	auto st = engine.Phase3(after1, attrs, drop);
 	auto ct = engine.Phase4(after1, attrs, drop, st);
+	auto order_keys = engine.OrderKeys(after1, drop);
+	engine.Style(after1, attrs, drop);
+	auto frontmatter = engine.Frontmatter(after1);
+	bool any_order = std::find_if(order_keys.begin(), order_keys.end(), [](int64_t k) { return k != 0; }) !=
+	                 order_keys.end();
 
 	auto &items = ListValue::GetChildren(list);
 	bool any_drop = std::find(drop.begin(), drop.end(), true) != drop.end();
@@ -917,7 +1078,7 @@ ApplyResult Apply(const Value &list, const BlockFields &fields, const LogicalTyp
 	for (idx_t i = 0; i < n_rows; i++) {
 		any_attr = any_attr || attrs[i] != tree.nodes[i].attributes;
 	}
-	if (!any_drop && !any_attr && !st.changed && !ct.changed) {
+	if (!any_drop && !any_attr && !st.changed && !ct.changed && !any_order && frontmatter.empty()) {
 		engine.result.blocks = items; // nothing to do: the input, unchanged
 		return std::move(engine.result);
 	}
@@ -961,7 +1122,9 @@ ApplyResult Apply(const Value &list, const BlockFields &fields, const LogicalTyp
 	};
 
 	int32_t next_order = 0;
-	auto emit_gen = [&](const Gen &g, idx_t anchor, int32_t level) {
+	vector<int64_t> out_key; // phase 5's sort key, one per emitted row
+	auto emit_gen = [&](const Gen &g, idx_t anchor, int32_t level, int64_t key) {
+		out_key.push_back(key);
 		auto children = StructValue::GetChildren(items[anchor]); // copies any extra fields (filename)
 		children[fields.kind] = Value(g.kind);
 		children[fields.element_type] = Value(g.element_type);
@@ -979,10 +1142,10 @@ ApplyResult Apply(const Value &list, const BlockFields &fields, const LogicalTyp
 			auto c = open.back();
 			open.pop_back();
 			for (auto &g : ct.last_children[c]) {
-				emit_gen(g, c, new_level(c) + 1);
+				emit_gen(g, c, new_level(c) + 1, 0);
 			}
 			for (auto &g : ct.after_siblings[c]) {
-				emit_gen(g, c, new_level(c));
+				emit_gen(g, c, new_level(c), order_keys[c]);
 			}
 		}
 	};
@@ -992,6 +1155,7 @@ ApplyResult Apply(const Value &list, const BlockFields &fields, const LogicalTyp
 		if (drop[i] || i < skip_until || items[i].IsNull()) {
 			if (items[i].IsNull() && !drop[i] && i >= skip_until) {
 				engine.result.blocks.push_back(items[i]);
+				out_key.push_back(0);
 				next_order++;
 			}
 			continue;
@@ -1003,10 +1167,10 @@ ApplyResult Apply(const Value &list, const BlockFields &fields, const LogicalTyp
 			if (!ins.cls.empty()) {
 				wrapper.attrs["class"] = ins.cls;
 			}
-			emit_gen(wrapper, i, ins.level);
+			emit_gen(wrapper, i, ins.level, order_keys[i]);
 		}
 		for (auto &g : ct.before_siblings[i]) {
-			emit_gen(g, i, new_level(i));
+			emit_gen(g, i, new_level(i), order_keys[i]);
 		}
 		if (!st.unwrapped[i]) {
 			auto &node = tree.nodes[i];
@@ -1024,12 +1188,13 @@ ApplyResult Apply(const Value &list, const BlockFields &fields, const LogicalTyp
 				children[fields.attributes] = make_map(attrs[i]);
 			}
 			engine.result.blocks.push_back(Value::STRUCT(block_type, std::move(children)));
+			out_key.push_back(order_keys[i]);
 		}
 		for (auto &g : ct.first_children[i]) {
-			emit_gen(g, i, new_level(i) + 1);
+			emit_gen(g, i, new_level(i) + 1, 0);
 		}
 		for (auto &g : ct.materialized[i]) {
-			emit_gen(g, i, new_level(i) + 1);
+			emit_gen(g, i, new_level(i) + 1, 0);
 		}
 		if (ct.replaced[i]) {
 			skip_until = tree.nodes[i].subtree_end; // a replaced block has no inline children left
@@ -1039,6 +1204,132 @@ ApplyResult Apply(const Value &list, const BlockFields &fields, const LogicalTyp
 		}
 	}
 	close_until(n_rows);
+	auto &out = engine.result.blocks;
+	auto level_of = [&](idx_t k) {
+		auto &v = StructValue::GetChildren(out[k])[fields.level];
+		return v.IsNull() ? 1 : v.GetValue<int32_t>();
+	};
+
+	// phase 5: stable-sort each set of siblings by key; a block moves with its subtree
+	if (any_order) {
+		vector<idx_t> perm;
+		std::function<void(idx_t, idx_t)> sort_range = [&](idx_t lo, idx_t hi) {
+			if (lo >= hi) {
+				return;
+			}
+			int32_t sibling_level = level_of(lo);
+			for (idx_t k = lo; k < hi; k++) {
+				sibling_level = MinValue(sibling_level, level_of(k));
+			}
+			vector<std::pair<idx_t, idx_t>> segments; // [start, end) per sibling and its subtree
+			for (idx_t k = lo; k < hi;) {
+				idx_t end = k + 1;
+				while (end < hi && level_of(end) > sibling_level) {
+					end++;
+				}
+				segments.emplace_back(k, end);
+				k = end;
+			}
+			std::stable_sort(segments.begin(), segments.end(),
+			                 [&](const std::pair<idx_t, idx_t> &a, const std::pair<idx_t, idx_t> &b) {
+				                 return out_key[a.first] < out_key[b.first];
+			                 });
+			for (auto &seg : segments) {
+				perm.push_back(seg.first);
+				sort_range(seg.first + 1, seg.second);
+			}
+		};
+		sort_range(0, out.size());
+		vector<Value> sorted;
+		for (auto k : perm) {
+			sorted.push_back(out[k]);
+		}
+		out = std::move(sorted);
+	}
+
+	// phase 6: @frontmatter, merged into an existing front matter block or a new one at the start
+	if (!frontmatter.empty()) {
+		int64_t existing = -1;
+		for (idx_t k = 0; k < out.size() && existing < 0; k++) {
+			if (out[k].IsNull()) {
+				continue;
+			}
+			auto &f = StructValue::GetChildren(out[k]);
+			if (!f[fields.element_type].IsNull() && f[fields.element_type].ToString() == "metadata") {
+				auto &attr_map = f[fields.attributes];
+				if (!attr_map.IsNull()) {
+					for (auto &kv : MapValue::GetChildren(attr_map)) {
+						auto &pair = StructValue::GetChildren(kv);
+						if (!pair[0].IsNull() && pair[0].ToString() == "role" && !pair[1].IsNull() &&
+						    pair[1].ToString() == "frontmatter") {
+							existing = static_cast<int64_t>(k);
+						}
+					}
+				}
+			}
+		}
+		if (existing >= 0) {
+			// replace the lines for keys the sheet sets (a line starting "key:"), append the rest
+			auto children = StructValue::GetChildren(out[existing]);
+			string old_text = children[fields.content].IsNull() ? string() : children[fields.content].ToString();
+			std::istringstream in(old_text);
+			string line, text;
+			std::set<string> written;
+			while (std::getline(in, line)) {
+				for (auto &kv : frontmatter) {
+					if (line.compare(0, kv.first.size() + 1, kv.first + ":") == 0) {
+						line = kv.first + ": " + kv.second;
+						written.insert(kv.first);
+					}
+				}
+				text += line + "\n";
+			}
+			for (auto &kv : frontmatter) {
+				if (!written.count(kv.first)) {
+					text += kv.first + ": " + kv.second + "\n";
+				}
+			}
+			children[fields.content] = Value(text);
+			out[existing] = Value::STRUCT(block_type, std::move(children));
+		} else {
+			string text;
+			for (auto &kv : frontmatter) {
+				text += kv.first + ": " + kv.second + "\n";
+			}
+			idx_t at = 0;
+			while (at < out.size() && !out[at].IsNull() && level_of(at) == 0) {
+				at++; // after a level-0 document root
+			}
+			vector<Value> fields_v;
+			if (!out.empty() && !out[0].IsNull()) {
+				fields_v = StructValue::GetChildren(out[0]); // copies extra fields (filename)
+			} else {
+				for (idx_t f = 0; f < StructType::GetChildCount(block_type); f++) {
+					fields_v.emplace_back(StructType::GetChildType(block_type, f));
+				}
+			}
+			fields_v[fields.kind] = Value("block");
+			fields_v[fields.element_type] = Value("metadata");
+			fields_v[fields.content] = Value(text);
+			fields_v[fields.level] = Value::INTEGER(1);
+			fields_v[fields.encoding] = Value("yaml");
+			std::map<string, string> role {{"role", "frontmatter"}};
+			fields_v[fields.attributes] = make_map(role);
+			out.insert(out.begin() + static_cast<int64_t>(at), Value::STRUCT(block_type, std::move(fields_v)));
+		}
+	}
+
+	// element_order follows the final row order
+	if (any_order || !frontmatter.empty()) {
+		for (idx_t k = 0; k < out.size(); k++) {
+			if (out[k].IsNull()) {
+				continue;
+			}
+			auto children = StructValue::GetChildren(out[k]);
+			children[fields.element_order] = Value::INTEGER(static_cast<int32_t>(k));
+			out[k] = Value::STRUCT(block_type, std::move(children));
+		}
+	}
 	return std::move(engine.result);
 }
 

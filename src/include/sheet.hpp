@@ -48,6 +48,7 @@ struct Rule {
 
 struct Sheet {
 	vector<Rule> rules;
+	vector<Declaration> frontmatter; // @frontmatter declarations, in source order (phase 6)
 	vector<Diagnostic> diagnostics;
 };
 

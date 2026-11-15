@@ -56,6 +56,13 @@ unique_ptr<FunctionData> RulesBind(ClientContext &, TableFunctionBindInput &inpu
 			                        Value::INTEGER(d.pos.column)});
 		}
 	}
+	auto none = Value::LIST(LogicalType::INTEGER, {Value::INTEGER(0), Value::INTEGER(0), Value::INTEGER(0)});
+	for (auto &d : sheet.frontmatter) {
+		result->rows.push_back({Value(LogicalType::INTEGER), Value("@frontmatter"), Value(LogicalType::VARCHAR),
+		                        Value(d.property), Value(d.value_text), Value::BOOLEAN(d.important), none,
+		                        Value::INTEGER(d.order), Value(LogicalType::VARCHAR), Value::INTEGER(d.pos.line),
+		                        Value::INTEGER(d.pos.column)});
+	}
 	return std::move(result);
 }
 

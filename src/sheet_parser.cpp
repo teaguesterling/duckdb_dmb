@@ -241,6 +241,57 @@ struct Builder {
 		}
 	}
 
+	//! The declarations of a { ... } block, recovering from ERROR nodes.
+	void Declarations(TsCtx &ctx, TSNode block, vector<Declaration> &decls) {
+		for (uint32_t i = 0; i < ts_node_named_child_count(block); i++) {
+			auto c = ts_node_named_child(block, i);
+			auto t = NodeType(c);
+			if (t == "declaration") {
+				Declaration d;
+				if (ParseDeclaration(ctx, c, d)) {
+					decls.push_back(std::move(d));
+				}
+			} else if (t == "comment" || t == "js_comment") {
+				continue;
+			} else if (t == "rule_set") {
+				ctx.Diag("warning", "nested-rule", "nested rules are not supported: " + ctx.Text(c), c);
+			} else if (t == "ERROR") {
+				Recover(ctx, c, decls);
+			} else {
+				ctx.Diag("error", "syntax", "cannot parse " + ctx.Text(c), c);
+			}
+		}
+	}
+
+	//! @frontmatter { key: value; ... } (phase 6). Other at-rules are not supported.
+	void AtRule(TsCtx &ctx, TSNode at, const string &media) {
+		string keyword;
+		TSNode block;
+		bool have_block = false;
+		for (uint32_t i = 0; i < ts_node_named_child_count(at); i++) {
+			auto c = ts_node_named_child(at, i);
+			if (NodeType(c) == "at_keyword") {
+				keyword = ctx.Text(c);
+			} else if (NodeType(c) == "block") {
+				block = c;
+				have_block = true;
+			}
+		}
+		if (keyword != "@frontmatter") {
+			ctx.Diag("warning", "not-yet", "this at-rule is not supported yet: " + Trim40(ctx.Text(at)), at);
+			return;
+		}
+		if (!media.empty()) {
+			ctx.Diag("warning", "not-yet", "@frontmatter inside @media is not supported", at);
+			return;
+		}
+		if (!have_block) {
+			ctx.Diag("error", "syntax", "@frontmatter needs a { ... } block", at);
+			return;
+		}
+		Declarations(ctx, block, sheet.frontmatter);
+	}
+
 	void RuleSet(TsCtx &ctx, TSNode rs, const string &media) {
 		TSNode selectors, block;
 		bool have_sel = false, have_block = false;
@@ -260,24 +311,7 @@ struct Builder {
 			return;
 		}
 		vector<Declaration> decls;
-		for (uint32_t i = 0; i < ts_node_named_child_count(block); i++) {
-			auto c = ts_node_named_child(block, i);
-			auto t = NodeType(c);
-			if (t == "declaration") {
-				Declaration d;
-				if (ParseDeclaration(ctx, c, d)) {
-					decls.push_back(std::move(d));
-				}
-			} else if (t == "comment" || t == "js_comment") {
-				continue;
-			} else if (t == "rule_set") {
-				ctx.Diag("warning", "nested-rule", "nested rules are not supported: " + ctx.Text(c), c);
-			} else if (t == "ERROR") {
-				Recover(ctx, c, decls);
-			} else {
-				ctx.Diag("error", "syntax", "cannot parse " + ctx.Text(c), c);
-			}
-		}
+		Declarations(ctx, block, decls);
 		for (uint32_t i = 0; i < ts_node_named_child_count(selectors); i++) {
 			auto sel = ts_node_named_child(selectors, i);
 			auto st = NodeType(sel);
@@ -349,7 +383,7 @@ struct Builder {
 			} else if (t == "import_statement") {
 				ctx.Diag("warning", "import-unsupported", "@import is not supported yet", c);
 			} else if (t == "at_rule") {
-				ctx.Diag("warning", "not-yet", "this at-rule is not supported yet: " + ctx.Text(c).substr(0, 40), c);
+				AtRule(ctx, c, media);
 			} else if (t == "comment" || t == "js_comment") {
 				continue;
 			} else if (t == "ERROR") {
