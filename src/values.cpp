@@ -231,6 +231,14 @@ bool ValueEvaluator::Eval(const vector<Token> &tokens, idx_t node, string &out, 
 					return false;
 				}
 				piece = Slug(inner);
+			} else if (name == "counter") {
+				if (!counters || tok.args.size() != 1 || tok.args[0].size() != 1 ||
+				    tok.args[0][0].kind != Token::IDENT) {
+					error = counters ? "counter() takes one counter name" : "counter() works only in content";
+					return false;
+				}
+				auto it = counters->find(tok.args[0][0].text);
+				piece = std::to_string(it == counters->end() ? 0 : it->second);
 			} else if (name == "url") {
 				// the document's own source: attributes['source'] on a level-0 document root (inferred)
 				const string *src = nullptr;

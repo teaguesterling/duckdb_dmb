@@ -1,0 +1,167 @@
+# name: test/sql/dcs_apply_content.test
+# description: dcs_apply phase 4 -- content, ::before and ::after, placement, counters, text-transform, -dcs-replace
+# group: [sql]
+
+require dmb
+
+statement ok
+CREATE MACRO b(k, t, c, lvl, attrs, o) AS
+    {'kind': k, 'element_type': t, 'content': c, 'level': lvl, 'encoding': 'text',
+     'attributes': attrs::MAP(VARCHAR, VARCHAR), 'element_order': o};
+
+#  0 heading "Comments" h2 #comments | 1 paragraph > 2 text "Hello"
+#  3 list > 4 list_item "tight" (no children), 5 list_item "two" | 6 code "x"
+statement ok
+CREATE TABLE fx AS SELECT [
+  b('block', 'heading', 'Comments', 1, MAP {'heading_level': '2', 'id': 'comments'}, 0),
+  b('block', 'paragraph', '', 1, MAP {}, 1),
+  b('inline', 'text', 'Hello', 2, MAP {}, 2),
+  b('block', 'list', '', 1, MAP {'list_type': 'bullet'}, 3),
+  b('block', 'list_item', 'tight', 2, MAP {}, 4),
+  b('block', 'list_item', 'two', 2, MAP {}, 5),
+  b('block', 'code', 'x', 1, MAP {'language': 'python'}, 6)
+] AS doc;
+
+statement ok
+CREATE MACRO rows(sheet) AS TABLE
+    SELECT u.element_order AS o, u.kind AS k, u.element_type AS t, u.content AS c, u.level AS l, u.attributes AS a
+    FROM (SELECT unnest(dcs_apply(doc, sheet)) AS u FROM fx);
+
+# The spec's first use, as text: an inline anchor after each h2. Generated content is inline by
+# default, as in CSS. The heading keeps its title in content, and the title becomes a text child,
+# so the children (authoritative when present) read "Comments" then the anchor.
+query IIIII
+SELECT o, k, t, c, l FROM rows('h2::after { content: " [¶](#" attr(id) ")"; }') ORDER BY o;
+----
+0	block	heading	Comments	1
+1	inline	text	Comments	2
+2	inline	text	 [¶](#comments)	2
+3	block	paragraph	(empty)	1
+4	inline	text	Hello	2
+5	block	list	(empty)	1
+6	block	list_item	tight	2
+7	block	list_item	two	2
+8	block	code	x	1
+
+# ::before goes first among the children.
+query III
+SELECT o, t, c FROM rows('p::before { content: "» "; }') WHERE o BETWEEN 1 AND 3 ORDER BY o;
+----
+1	paragraph	(empty)
+2	text	» 
+3	text	Hello
+
+# A leaf block keeps its text as a child, so the generated text sits beside it.
+query IIII
+SELECT o, t, c, l FROM rows('li::before { content: "- "; }') WHERE o BETWEEN 3 AND 9 ORDER BY o;
+----
+3	list	(empty)	1
+4	list_item	(empty)	2
+5	text	- 	3
+6	text	tight	3
+7	list_item	(empty)	2
+8	text	- 	3
+9	text	two	3
+
+# -dcs-content-place: block makes a new paragraph beside the block, after its whole subtree.
+query IIII
+SELECT o, t, c, l FROM rows('p::after { content: "End"; -dcs-content-place: block; }') WHERE o BETWEEN 1 AND 4 ORDER BY o;
+----
+1	paragraph	(empty)	1
+2	text	Hello	2
+3	paragraph	End	1
+4	list	(empty)	1
+
+# content on the element itself replaces its text.
+query II
+SELECT t, c FROM rows('h2 { content: text() " (draft)"; }') WHERE o = 0;
+----
+heading	Comments (draft)
+
+query III
+SELECT o, t, c FROM rows('p { content: "Replaced"; }') WHERE o IN (1, 2) ORDER BY o;
+----
+1	paragraph	Replaced
+2	list	(empty)
+
+# Refused: content on a container of blocks, and inline content inside a code block.
+query I
+SELECT dcs_apply(doc, 'list { content: "x"; } code::after { content: "y"; }') = doc FROM fx;
+----
+true
+
+statement error
+SELECT dcs_apply(doc, 'list { content: "x"; }', true) FROM fx;
+----
+content-on-container
+
+statement error
+SELECT dcs_apply(doc, 'code::after { content: "y"; }', true) FROM fx;
+----
+content-needs-text-block
+
+# -dcs-content-as: a non-text format becomes a raw element carrying its format (D9). The
+# dcs_parse_markdown and dcs_parse_html wrappers turn it into parsed rows.
+query IIIII
+SELECT k, t, c, a['format'], a['dcs-content-as'] FROM rows('h2::after { content: " [¶](#" attr(id) ")"; -dcs-content-as: markdown; }') WHERE o = 2;
+----
+inline	raw	 [¶](#comments)	markdown	markdown
+
+query IIII
+SELECT k, t, a['format'], a['dcs-content-as'] FROM rows('p::after { content: "*x*"; -dcs-content-as: md; -dcs-content-place: block; }') WHERE o = 3;
+----
+block	raw	markdown	markdown
+
+# No per-row reader exists for rst: it stays raw, with a diagnostic.
+query II
+SELECT t, a['format'] FROM rows('p::after { content: "*x*"; -dcs-content-as: rst; }') WHERE o = 3;
+----
+raw	rst
+
+statement error
+SELECT dcs_apply(doc, 'p::after { content: "*x*"; -dcs-content-as: rst; }', true) FROM fx;
+----
+no-reader
+
+# Counters, in document order: reset, then increment, then the element's content.
+query I
+SELECT list_transform(list_filter(dcs_apply([
+  b('block', 'heading', 'A', 1, MAP {'heading_level': '2'}, 0),
+  b('block', 'heading', 'B', 1, MAP {'heading_level': '2'}, 1)
+], 'h2 { counter-increment: h; } h2::before { content: counter(h) ". "; }'), lambda x: x.kind = 'inline'), lambda x: x.content);
+----
+['1. ', A, '2. ', B]
+
+query I
+SELECT list_transform(list_filter(dcs_apply(doc, 'list { counter-reset: n 10; } li { counter-increment: n; } li::before { content: counter(n) " "; }'),
+    lambda x: x.kind = 'inline' AND x.level = 3), lambda x: x.content) FROM fx;
+----
+['11 ', tight, '12 ', two]
+
+# text-transform reaches the element's text and is inherited by the blocks inside it.
+query I
+SELECT c FROM rows('p { text-transform: uppercase; }') WHERE o = 2;
+----
+HELLO
+
+query I
+SELECT list(c ORDER BY o) FROM rows('list { text-transform: uppercase; }') WHERE t = 'list_item';
+----
+[TIGHT, TWO]
+
+query I
+SELECT dcs_apply([b('block', 'paragraph', 'hello wide world', 1, MAP {}, 0)], 'p { text-transform: capitalize; }')[1].content;
+----
+Hello Wide World
+
+# -dcs-replace: an RE2 pattern and its replacement, every match, in each row's text.
+query I
+SELECT c FROM rows('p { -dcs-replace: "l+" "L"; }') WHERE o = 2;
+----
+HeLo
+
+# Still not supported: -dcs-link and text-overflow.
+statement error
+SELECT dcs_apply(doc, 'p { -dcs-link: absolute; }', true) FROM fx;
+----
+not-yet

@@ -3,6 +3,8 @@
 #include "values.hpp"
 
 #include "duckdb/common/error_data.hpp"
+#include "re2/re2.h"
+#include "utf8proc.hpp"
 
 #include <algorithm>
 #include <set>
@@ -21,9 +23,7 @@ const std::set<string> &ReservedAttributes() {
 
 //! Properties the spec defines that later tasks implement. Diagnosed as not-yet, never silently dropped.
 const std::set<string> &LaterProperties() {
-	static const std::set<string> s {"content",         "-dcs-content-as",
-	                                 "-dcs-content-place", "text-transform",   "text-overflow",   "-dcs-replace",
-	                                 "-dcs-link",        "counter-reset",      "counter-increment", "order"};
+	static const std::set<string> s {"text-overflow", "-dcs-link", "order"};
 	return s;
 }
 
@@ -116,6 +116,124 @@ struct Structure {
 	bool changed = false;
 };
 
+//! Element properties of phase 4.
+bool IsPhase4Element(const string &p) {
+	return p == "content" || p == "counter-reset" || p == "counter-increment" || p == "text-transform" ||
+	       p == "-dcs-replace";
+}
+
+//! Properties a ::before or ::after rule may set.
+bool IsPseudoProperty(const string &p) {
+	return p == "content" || p == "-dcs-content-as" || p == "-dcs-content-place";
+}
+
+bool IsInteger(const string &s) {
+	if (s.empty() || s.size() > 18) {
+		return false;
+	}
+	size_t i = (s[0] == '+' || s[0] == '-') ? 1 : 0;
+	if (i == s.size()) {
+		return false;
+	}
+	for (; i < s.size(); i++) {
+		if (!std::isdigit(static_cast<unsigned char>(s[i]))) {
+			return false;
+		}
+	}
+	return true;
+}
+
+//! The spec's format names: md is markdown, restructured is rst.
+string NormalizeFormat(string f) {
+	std::transform(f.begin(), f.end(), f.begin(), [](unsigned char c) { return std::tolower(c); });
+	if (f == "md") {
+		return "markdown";
+	}
+	if (f == "restructured" || f == "restructuredtext") {
+		return "rst";
+	}
+	return f;
+}
+
+//! Formats a dcs_parse_* wrapper can parse (D9): a per-row reader exists for them.
+bool HasReader(const string &format) {
+	return format == "text" || format == "markdown" || format == "html";
+}
+
+//! Blocks that never hold inline children.
+bool LeafOnly(const string &type) {
+	static const std::set<string> s {"code", "table", "image", "hr", "page_break", "metadata",
+	                                 "raw",  "deflist", "lineblock", "document"};
+	return s.count(type) > 0;
+}
+
+//! A row phase 4 generates.
+struct Gen {
+	string kind;
+	string element_type;
+	string content;
+	std::map<string, string> attrs;
+};
+
+//! Phase 4's result, per input row.
+struct Content {
+	vector<bool> replaced;       // content was replaced; the row's inline descendants are dropped
+	vector<string> new_content;
+	vector<vector<Gen>> before_siblings, after_siblings, first_children, last_children, materialized;
+	vector<bool> has_transform, has_replace;
+	vector<string> transform, replace_re, replace_with;
+	bool changed = false;
+	void Resize(idx_t n) {
+		replaced.assign(n, false);
+		new_content.assign(n, "");
+		before_siblings.resize(n);
+		after_siblings.resize(n);
+		first_children.resize(n);
+		last_children.resize(n);
+		materialized.resize(n);
+		has_transform.assign(n, false);
+		has_replace.assign(n, false);
+		transform.assign(n, "");
+		replace_re.assign(n, "");
+		replace_with.assign(n, "");
+	}
+};
+
+//! Apply text-transform to one string: uppercase, lowercase, capitalize (first letter of each word).
+string TextTransform(const string &text, const string &how) {
+	if (how != "uppercase" && how != "lowercase" && how != "capitalize") {
+		return text;
+	}
+	auto data = reinterpret_cast<const utf8proc_uint8_t *>(text.data());
+	auto len = static_cast<utf8proc_ssize_t>(text.size());
+	string out;
+	bool word_start = true;
+	for (utf8proc_ssize_t pos = 0; pos < len;) {
+		utf8proc_int32_t cp;
+		auto n = utf8proc_iterate(data + pos, len - pos, &cp);
+		if (n <= 0) {
+			out += text[pos++];
+			continue;
+		}
+		pos += n;
+		auto cat = utf8proc_category(cp);
+		bool letter = cat >= UTF8PROC_CATEGORY_LU && cat <= UTF8PROC_CATEGORY_LO;
+		bool digit = cat >= UTF8PROC_CATEGORY_ND && cat <= UTF8PROC_CATEGORY_NO;
+		if (how == "uppercase") {
+			cp = utf8proc_toupper(cp);
+		} else if (how == "lowercase") {
+			cp = utf8proc_tolower(cp);
+		} else if (letter && word_start) {
+			cp = utf8proc_totitle(cp);
+		}
+		word_start = !(letter || digit);
+		utf8proc_uint8_t buf[4];
+		auto w = utf8proc_encode_char(cp, buf);
+		out.append(reinterpret_cast<const char *>(buf), static_cast<size_t>(w));
+	}
+	return out;
+}
+
 bool IsCustom(const string &p) {
 	return p.size() > 2 && p[0] == '-' && p[1] == '-';
 }
@@ -169,11 +287,11 @@ struct Engine {
 
 	//! Per node, per property: the winning declaration among the rules that pass `want`.
 	template <class WANT>
-	vector<std::map<string, Winner>> Cascade(const BlockTree &tree, WANT want) {
+	vector<std::map<string, Winner>> Cascade(const BlockTree &tree, WANT want, const string &pseudo = "") {
 		vector<std::map<string, Winner>> out(tree.nodes.size());
 		Matcher matcher(tree);
 		for (auto &rule : sheet.rules) {
-			if (!rule.usable || !rule.media_format.empty() || !rule.pseudo_element.empty()) {
+			if (!rule.usable || !rule.media_format.empty() || rule.pseudo_element != pseudo) {
 				continue;
 			}
 			bool any = false;
@@ -249,6 +367,20 @@ struct Engine {
 					} else if (p == "-dcs-dedupe" && v != "text") {
 						Diag("error", "bad-value", "-dcs-dedupe takes text, not " + v, d.pos);
 					}
+				} else if (IsPhase4Element(p) || IsPseudoProperty(p)) {
+					auto v = Trim(d.value_text);
+					if (p == "-dcs-content-place" && v != "inline" && v != "block") {
+						Diag("error", "bad-value", "-dcs-content-place takes inline or block, not " + v, d.pos);
+					} else if (p == "text-transform" && v != "uppercase" && v != "lowercase" && v != "capitalize" &&
+					           v != "none") {
+						Diag("error", "bad-value", "text-transform takes uppercase, lowercase, capitalize or none", d.pos);
+					} else if (p == "-dcs-content-as" && !HasReader(NormalizeFormat(v))) {
+						Diag("warning", "no-reader",
+						     "no per-row reader parses " + v + "; the content stays a raw block with its format", d.pos);
+					}
+					if (rule.pseudo_element.empty() && (p == "-dcs-content-as" || p == "-dcs-content-place")) {
+						Diag("warning", "pseudo-only", p + " applies to ::before and ::after content only", d.pos);
+					}
 				} else if (LaterProperties().count(p)) {
 					Diag("warning", "not-yet", p + " is not supported yet", d.pos);
 				} else if (p.compare(0, 5, "-dcs-") == 0) {
@@ -256,8 +388,11 @@ struct Engine {
 				} else {
 					Diag("warning", "not-yet", "presentation property " + p + " is not supported yet", d.pos);
 				}
-				if (!rule.pseudo_element.empty() && !LaterProperties().count(p)) {
-					Diag("warning", "not-yet", "::" + rule.pseudo_element + " is not supported yet", d.pos);
+				if (!rule.pseudo_element.empty() && !IsPseudoProperty(p)) {
+					Diag("warning", "not-yet",
+					     "::" + rule.pseudo_element + " takes content, -dcs-content-as and -dcs-content-place only; " + p +
+					         " is not supported there yet",
+					     d.pos);
 				}
 			}
 		}
@@ -555,6 +690,192 @@ struct Engine {
 		return st;
 	}
 
+	//! Phase 4: content. Element content replaces text; ::before and ::after generate rows.
+	//! Counters run in document order: reset, then increment, then the block's own content.
+	Content Phase4(const BlockTree &tree, const vector<std::map<string, string>> &attrs, const vector<bool> &drop,
+	               const Structure &st) {
+		Content ct;
+		auto n_rows = tree.nodes.size();
+		ct.Resize(n_rows);
+		auto elem = Cascade(tree, IsPhase4Element);
+		auto before = Cascade(tree, IsPseudoProperty, "before");
+		auto after = Cascade(tree, IsPseudoProperty, "after");
+		std::map<string, int64_t> counters;
+		ValueEvaluator eval(tree);
+		eval.SetCounters(&counters);
+		auto has_block_children = [&](idx_t i) { return !tree.nodes[i].children.empty(); };
+		auto has_inline_children = [&](idx_t i) {
+			for (idx_t j = i + 1; j < tree.nodes[i].subtree_end; j++) {
+				if (tree.nodes[j].parent == static_cast<int64_t>(i) && tree.nodes[j].kind == "inline") {
+					return true;
+				}
+			}
+			return false;
+		};
+		for (idx_t i = 0; i < n_rows; i++) {
+			if (drop[i] || st.unwrapped[i] || !tree.Matchable(i)) {
+				continue;
+			}
+			auto &node = tree.nodes[i];
+			auto &props = elem[i];
+			// transforms, kept per block; inherited at emit time
+			auto tt = props.find("text-transform");
+			if (tt != props.end()) {
+				ct.transform[i] = Trim(tt->second.decl->value_text);
+				ct.has_transform[i] = true;
+				ct.changed = true; // so Apply does not take the "nothing to do" path
+			}
+			auto rp = props.find("-dcs-replace");
+			if (rp != props.end()) {
+				vector<Token> tokens;
+				string error;
+				if (TokenizeValue(rp->second.decl->value_text, tokens, error) && tokens.size() == 2 &&
+				    tokens[0].kind == Token::STRING && tokens[1].kind == Token::STRING) {
+					ct.replace_re[i] = tokens[0].text;
+					ct.replace_with[i] = tokens[1].text;
+					ct.has_replace[i] = true;
+					ct.changed = true;
+				} else {
+					Diag("error", "bad-value", "-dcs-replace takes two strings: a pattern and its replacement",
+					     rp->second.decl->pos);
+				}
+			}
+			// counters
+			auto reset = props.find("counter-reset");
+			if (reset != props.end()) {
+				ApplyCounters(reset->second, counters, true);
+			}
+			auto inc = props.find("counter-increment");
+			if (inc != props.end()) {
+				ApplyCounters(inc->second, counters, false);
+			}
+			// content on the element itself replaces its text
+			bool leaf_with_text = false;
+			string current = node.content;
+			auto cw = props.find("content");
+			if (cw != props.end()) {
+				auto v = Trim(cw->second.decl->value_text);
+				if (v == "normal" || v == "none") {
+					// CSS's keywords: leave the element as it is
+				} else if (has_block_children(i)) {
+					Diag("error", "content-on-container", "content replaces text; this block holds other blocks",
+					     cw->second.decl->pos);
+				} else {
+					string out;
+					bool is_null;
+					if (Evaluate(eval, *cw->second.decl, i, out, is_null)) {
+						ct.replaced[i] = true;
+						ct.new_content[i] = is_null ? string() : out;
+						current = ct.new_content[i];
+						result.changes.push_back(Change {node.element_order, cw->second.rule->index, "content",
+						                                 Value(tree.Text(i)), Value(current)});
+						ct.changed = true;
+					}
+				}
+			}
+			bool inlines_remain = !ct.replaced[i] && has_inline_children(i);
+			leaf_with_text = !inlines_remain && !current.empty();
+			bool materialized = false;
+			// ::before and ::after
+			for (int side = 0; side < 2; side++) {
+				auto &pseudo = side == 0 ? before[i] : after[i];
+				auto content = pseudo.find("content");
+				if (content == pseudo.end()) {
+					continue;
+				}
+				auto &decl = *content->second.decl;
+				auto v = Trim(decl.value_text);
+				if (v == "none" || v == "normal") {
+					continue;
+				}
+				string text;
+				bool is_null;
+				if (!Evaluate(eval, decl, i, text, is_null) || is_null || text.empty()) {
+					continue;
+				}
+				string place = "inline", format = "text";
+				auto pl = pseudo.find("-dcs-content-place");
+				if (pl != pseudo.end()) {
+					place = Trim(pl->second.decl->value_text);
+				}
+				auto fm = pseudo.find("-dcs-content-as");
+				if (fm != pseudo.end()) {
+					format = NormalizeFormat(Trim(fm->second.decl->value_text));
+				}
+				Gen gen;
+				gen.content = text;
+				if (format != "text") {
+					gen.element_type = "raw";
+					gen.attrs["format"] = format;
+					gen.attrs["dcs-content-as"] = format;
+				}
+				if (place == "block") {
+					gen.kind = "block";
+					if (gen.element_type.empty()) {
+						gen.element_type = "paragraph";
+					}
+					(side == 0 ? ct.before_siblings[i] : ct.after_siblings[i]).push_back(gen);
+				} else {
+					if (LeafOnly(node.element_type) || has_block_children(i)) {
+						Diag("error", "content-needs-text-block",
+						     "inline ::" + string(side == 0 ? "before" : "after") + " content needs a block of text; " +
+						         node.element_type + " can't hold it (use -dcs-content-place: block)",
+						     decl.pos);
+						continue;
+					}
+					gen.kind = "inline";
+					if (gen.element_type.empty()) {
+						gen.element_type = "text";
+					}
+					if (leaf_with_text && !materialized) {
+						// the block's own text becomes a child, so the children stay authoritative
+						Gen own;
+						own.kind = "inline";
+						own.element_type = "text";
+						own.content = current;
+						ct.materialized[i].push_back(own);
+						materialized = true;
+						if (node.element_type != "heading") {
+							ct.replaced[i] = true; // only a heading keeps a flattened title beside children
+							ct.new_content[i] = "";
+						}
+					}
+					(side == 0 ? ct.first_children[i] : ct.last_children[i]).push_back(gen);
+				}
+				result.changes.push_back(Change {node.element_order, content->second.rule->index,
+				                                 side == 0 ? "::before" : "::after", Value(LogicalType::VARCHAR),
+				                                 Value(text)});
+				ct.changed = true;
+			}
+		}
+		return ct;
+	}
+
+	void ApplyCounters(const Winner &w, std::map<string, int64_t> &counters, bool reset) {
+		std::istringstream in(Trim(w.decl->value_text));
+		vector<string> words;
+		string word;
+		while (in >> word) {
+			words.push_back(word);
+		}
+		if (words.size() == 1 && words[0] == "none") {
+			return;
+		}
+		for (idx_t k = 0; k < words.size(); k++) {
+			auto &name = words[k];
+			int64_t n = reset ? 0 : 1;
+			if (k + 1 < words.size() && IsInteger(words[k + 1])) {
+				n = std::strtoll(words[k + 1].c_str(), nullptr, 10);
+				k++;
+			}
+			if (reset) {
+				counters[name] = n;
+			} else {
+				counters[name] += n;
+			}
+		}
+	}
+
 	static string Trim(const string &s) {
 		auto b = s.find_first_not_of(" \t\r\n");
 		if (b == string::npos) {
@@ -566,26 +887,41 @@ struct Engine {
 
 } // namespace
 
+static bool fields_content_null(const Value &item, const BlockFields &fields) {
+	return StructValue::GetChildren(item)[fields.content].IsNull();
+}
+
 ApplyResult Apply(const Value &list, const BlockFields &fields, const LogicalType &block_type, const Sheet &sheet) {
 	Engine engine(sheet);
 	engine.CheckDeclarations();
 	auto tree = BlockTree::FromList(list, fields);
-	vector<std::map<string, string>> attrs(tree.nodes.size());
-	for (idx_t i = 0; i < tree.nodes.size(); i++) {
+	auto n_rows = tree.nodes.size();
+	vector<std::map<string, string>> attrs(n_rows);
+	for (idx_t i = 0; i < n_rows; i++) {
 		attrs[i] = tree.nodes[i].attributes;
 	}
 	// phase 1 matches the input; everything after it matches the document after phase 1
 	engine.Phase1(tree, attrs);
 	auto after1 = tree;
-	for (idx_t i = 0; i < after1.nodes.size(); i++) {
+	for (idx_t i = 0; i < n_rows; i++) {
 		after1.nodes[i].attributes = attrs[i];
 	}
 	engine.Attributes(after1, attrs);
 	auto drop = engine.Prune(after1);
 	auto st = engine.Phase3(after1, attrs, drop);
-	bool renumber = st.changed || std::find(drop.begin(), drop.end(), true) != drop.end();
+	auto ct = engine.Phase4(after1, attrs, drop, st);
 
 	auto &items = ListValue::GetChildren(list);
+	bool any_drop = std::find(drop.begin(), drop.end(), true) != drop.end();
+	bool any_attr = false;
+	for (idx_t i = 0; i < n_rows; i++) {
+		any_attr = any_attr || attrs[i] != tree.nodes[i].attributes;
+	}
+	if (!any_drop && !any_attr && !st.changed && !ct.changed) {
+		engine.result.blocks = items; // nothing to do: the input, unchanged
+		return std::move(engine.result);
+	}
+
 	auto &attr_type = StructType::GetChildType(block_type, fields.attributes);
 	auto make_map = [&](const std::map<string, string> &m) {
 		vector<Value> keys, values;
@@ -596,53 +932,116 @@ ApplyResult Apply(const Value &list, const BlockFields &fields, const LogicalTyp
 		return Value::MAP(MapType::KeyType(attr_type), MapType::ValueType(attr_type), std::move(keys),
 		                  std::move(values));
 	};
+	// text-transform and -dcs-replace are inherited: the nearest block that sets them wins
+	vector<int64_t> tt_from(n_rows, -1), rp_from(n_rows, -1);
+	for (idx_t i = 0; i < n_rows; i++) {
+		auto p = tree.nodes[i].parent;
+		tt_from[i] = ct.has_transform[i] ? static_cast<int64_t>(i) : (p >= 0 ? tt_from[p] : -1);
+		rp_from[i] = ct.has_replace[i] ? static_cast<int64_t>(i) : (p >= 0 ? rp_from[p] : -1);
+	}
+	std::unordered_map<string, std::unique_ptr<duckdb_re2::RE2>> regexes;
+	auto transform_text = [&](string text, idx_t owner, const string &type, const string &encoding) {
+		if (type == "raw" || encoding == "json") {
+			return text; // markup and data are not prose
+		}
+		if (rp_from[owner] >= 0) {
+			auto &pattern = ct.replace_re[rp_from[owner]];
+			auto it = regexes.find(pattern);
+			if (it == regexes.end()) {
+				it = regexes.emplace(pattern, std::unique_ptr<duckdb_re2::RE2>(new duckdb_re2::RE2(pattern))).first;
+			}
+			if (it->second->ok()) {
+				duckdb_re2::RE2::GlobalReplace(&text, *it->second, ct.replace_with[rp_from[owner]]);
+			}
+		}
+		if (tt_from[owner] >= 0) {
+			text = TextTransform(text, ct.transform[tt_from[owner]]);
+		}
+		return text;
+	};
+
 	int32_t next_order = 0;
-	for (idx_t i = 0; i < items.size(); i++) {
-		if (drop[i]) {
+	auto emit_gen = [&](const Gen &g, idx_t anchor, int32_t level) {
+		auto children = StructValue::GetChildren(items[anchor]); // copies any extra fields (filename)
+		children[fields.kind] = Value(g.kind);
+		children[fields.element_type] = Value(g.element_type);
+		children[fields.content] = Value(transform_text(g.content, anchor, g.element_type, "text"));
+		children[fields.level] = Value::INTEGER(level);
+		children[fields.encoding] = Value("text");
+		children[fields.attributes] = make_map(g.attrs);
+		children[fields.element_order] = Value::INTEGER(next_order++);
+		engine.result.blocks.push_back(Value::STRUCT(block_type, std::move(children)));
+	};
+	auto new_level = [&](idx_t i) { return tree.nodes[i].level + st.delta[i]; };
+	vector<idx_t> open; // blocks whose subtree is being emitted
+	auto close_until = [&](idx_t row) {
+		while (!open.empty() && tree.nodes[open.back()].subtree_end <= row) {
+			auto c = open.back();
+			open.pop_back();
+			for (auto &g : ct.last_children[c]) {
+				emit_gen(g, c, new_level(c) + 1);
+			}
+			for (auto &g : ct.after_siblings[c]) {
+				emit_gen(g, c, new_level(c));
+			}
+		}
+	};
+	idx_t skip_until = 0; // inline descendants of a block whose content was replaced
+	for (idx_t i = 0; i < n_rows; i++) {
+		close_until(i);
+		if (drop[i] || i < skip_until || items[i].IsNull()) {
+			if (items[i].IsNull() && !drop[i] && i >= skip_until) {
+				engine.result.blocks.push_back(items[i]);
+				next_order++;
+			}
 			continue;
 		}
 		for (auto &ins : st.before[i]) {
-			if (items[i].IsNull()) {
-				break;
-			}
-			auto children = StructValue::GetChildren(items[i]); // copies any extra fields (filename)
-			children[fields.kind] = Value("block");
-			children[fields.element_type] = Value(ins.element_type);
-			children[fields.content] = Value("");
-			children[fields.level] = Value::INTEGER(ins.level);
-			std::map<string, string> wrapper_attrs;
+			Gen wrapper;
+			wrapper.kind = "block";
+			wrapper.element_type = ins.element_type;
 			if (!ins.cls.empty()) {
-				wrapper_attrs["class"] = ins.cls;
+				wrapper.attrs["class"] = ins.cls;
 			}
-			children[fields.attributes] = make_map(wrapper_attrs);
+			emit_gen(wrapper, i, ins.level);
+		}
+		for (auto &g : ct.before_siblings[i]) {
+			emit_gen(g, i, new_level(i));
+		}
+		if (!st.unwrapped[i]) {
+			auto &node = tree.nodes[i];
+			auto children = StructValue::GetChildren(items[i]);
+			auto type = st.element_type[i].empty() ? node.element_type : st.element_type[i];
+			auto content = ct.replaced[i] ? ct.new_content[i] : node.content;
 			children[fields.element_order] = Value::INTEGER(next_order++);
+			children[fields.level] = Value::INTEGER(new_level(i));
+			children[fields.element_type] = Value(type);
+			auto owner = i; // tt_from and rp_from already inherit along the parent chain
+			if (!fields_content_null(items[i], fields) || ct.replaced[i]) {
+				children[fields.content] = Value(transform_text(content, owner, type, node.encoding));
+			}
+			if (attrs[i] != node.attributes) {
+				children[fields.attributes] = make_map(attrs[i]);
+			}
 			engine.result.blocks.push_back(Value::STRUCT(block_type, std::move(children)));
 		}
-		if (st.unwrapped[i]) {
-			continue;
+		for (auto &g : ct.first_children[i]) {
+			emit_gen(g, i, new_level(i) + 1);
 		}
-		int32_t order = next_order++;
-		bool same_attrs = attrs[i] == tree.nodes[i].attributes;
-		bool same_shape = st.delta[i] == 0 && st.element_type[i].empty();
-		if (items[i].IsNull() || (same_attrs && same_shape && !renumber)) {
-			engine.result.blocks.push_back(items[i]);
-			continue;
+		for (auto &g : ct.materialized[i]) {
+			emit_gen(g, i, new_level(i) + 1);
 		}
-		auto children = StructValue::GetChildren(items[i]);
-		children[fields.element_order] = Value::INTEGER(order);
-		if (st.delta[i] != 0) {
-			children[fields.level] = Value::INTEGER(tree.nodes[i].level + st.delta[i]);
+		if (ct.replaced[i]) {
+			skip_until = tree.nodes[i].subtree_end; // a replaced block has no inline children left
 		}
-		if (!st.element_type[i].empty()) {
-			children[fields.element_type] = Value(st.element_type[i]);
+		if (!st.unwrapped[i]) {
+			open.push_back(i);
 		}
-		if (!same_attrs) {
-			children[fields.attributes] = make_map(attrs[i]);
-		}
-		engine.result.blocks.push_back(Value::STRUCT(block_type, std::move(children)));
 	}
+	close_until(n_rows);
 	return std::move(engine.result);
 }
+
 
 } // namespace dmb
 } // namespace duckdb

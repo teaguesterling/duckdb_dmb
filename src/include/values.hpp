@@ -28,9 +28,14 @@ public:
 	//! False (with `error` naming the problem) on an unknown function or a bad argument.
 	//! `is_null` is set when the value is NULL, as url() is with no source.
 	bool Eval(const vector<Token> &tokens, idx_t node, string &out, bool &is_null, string &error) const;
+	//! The counters counter(name) reads; unset names read 0. Null: counter() is an error.
+	void SetCounters(const std::map<string, int64_t> *counters_p) {
+		counters = counters_p;
+	}
 
 private:
 	const BlockTree &tree;
+	const std::map<string, int64_t> *counters = nullptr;
 };
 
 } // namespace dmb
