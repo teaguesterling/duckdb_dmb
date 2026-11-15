@@ -1,0 +1,117 @@
+# name: test/sql/dcs_apply_structure.test
+# description: dcs_apply phase 3 -- display contents, wrap, retag, heading level, -dcs-as table (D7)
+# group: [sql]
+
+require dmb
+
+statement ok
+CREATE MACRO b(k, t, c, lvl, attrs, o) AS
+    {'kind': k, 'element_type': t, 'content': c, 'level': lvl, 'encoding': 'text',
+     'attributes': attrs::MAP(VARCHAR, VARCHAR), 'element_order': o};
+
+#  0 heading "Title" h2 | 1 section role=main > 2 paragraph > 3 text "One", 4 code csv
+#  5 paragraph > 6 text "Two"
+statement ok
+CREATE TABLE fx AS SELECT [
+  b('block', 'heading', 'Title', 1, MAP {'heading_level': '2'}, 0),
+  b('block', 'section', '', 1, MAP {'role': 'main'}, 1),
+  b('block', 'paragraph', '', 2, MAP {}, 2),
+  b('inline', 'text', 'One', 3, MAP {}, 3),
+  b('block', 'code', 'a,b', 2, MAP {'language': 'csv'}, 4),
+  b('block', 'paragraph', '', 1, MAP {}, 5),
+  b('inline', 'text', 'Two', 2, MAP {}, 6)
+] AS doc;
+
+statement ok
+CREATE MACRO rows(sheet) AS TABLE
+    SELECT u.element_order AS o, u.element_type AS t, u.level AS l, u.attributes AS a
+    FROM (SELECT unnest(dcs_apply(doc, sheet)) AS u FROM fx);
+
+# display: contents removes the container and lifts its subtree one level.
+query III
+SELECT o, t, l FROM rows('section { display: contents; }') ORDER BY o;
+----
+0	heading	1
+1	paragraph	1
+2	text	2
+3	code	1
+4	paragraph	1
+5	text	2
+
+# -dcs-wrap inserts a container before the block, and pushes the block's subtree down one level.
+query III
+SELECT o, t, l FROM rows('paragraph { -dcs-wrap: blockquote; }') ORDER BY o;
+----
+0	heading	1
+1	section	1
+2	blockquote	2
+3	paragraph	3
+4	text	4
+5	code	2
+6	blockquote	1
+7	paragraph	2
+8	text	3
+
+query IIII
+SELECT o, t, l, a['class'] FROM rows('code { -dcs-wrap: callout(note); }') WHERE o IN (4, 5) ORDER BY o;
+----
+4	div	2	callout note
+5	code	3	NULL
+
+# -dcs-as retags. Leaving heading drops heading_level; hN sets it.
+query II
+SELECT t, cardinality(a) FROM rows('h2 { -dcs-as: paragraph; }') WHERE o = 0;
+----
+paragraph	0
+
+query II
+SELECT t, a['heading_level'] FROM rows('h2 { -dcs-as: h4; }') WHERE o = 0;
+----
+heading	4
+
+query II
+SELECT t, a['heading_level'] FROM rows('paragraph:contains("Two") { -dcs-as: h3; }') WHERE o = 5;
+----
+heading	3
+
+# -dcs-level: +n, -n or n changes heading_level, clamped to 1..6.
+query IIII
+SELECT (SELECT a['heading_level'] FROM rows('h2 { -dcs-level: +1; }') WHERE o = 0),
+       (SELECT a['heading_level'] FROM rows('h2 { -dcs-level: -5; }') WHERE o = 0),
+       (SELECT a['heading_level'] FROM rows('h2 { -dcs-level: 9; }') WHERE o = 0),
+       (SELECT a['heading_level'] FROM rows('h2 { -dcs-level: 4; }') WHERE o = 0);
+----
+3	1	6	4
+
+# D7: -dcs-as: table marks an embedded-data code block; dcs_apply_parsed converts the marked ones.
+query II
+SELECT t, a['dcs-as'] FROM rows('code:data { -dcs-as: table; }') WHERE o = 4;
+----
+code	table
+
+# Refusals change nothing, and strict raises them.
+query I
+SELECT dcs_apply(doc, 'paragraph { -dcs-level: +1; } paragraph { -dcs-as: table; } paragraph { display: contents; }') = doc FROM fx;
+----
+true
+
+statement error
+SELECT dcs_apply(doc, 'paragraph { -dcs-level: +1; }', true) FROM fx;
+----
+level-not-heading
+
+statement error
+SELECT dcs_apply(doc, 'paragraph { -dcs-as: table; }', true) FROM fx;
+----
+as-table-needs-data
+
+statement error
+SELECT dcs_apply(doc, 'paragraph { display: contents; }', true) FROM fx;
+----
+contents-has-inlines
+
+# The D7 wrapper needs duck_block_utils#79; without it, the error names the missing function.
+statement error
+SELECT dcs_apply_parsed(doc, 'code:data { -dcs-as: table; }') FROM fx;
+----
+duck_blocks_parse_embedded

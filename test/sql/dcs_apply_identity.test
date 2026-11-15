@@ -185,12 +185,12 @@ SELECT o, a['class'] FROM applied('h2 { -dcs-id: "z"; } #z { -dcs-class: +seen; 
 
 # A rule dmb can't use yet is skipped with a diagnostic, never an empty result: strict raises it.
 query I
-SELECT a['x'] FROM applied(':chrome { --x: "y"; } #intro { --x: "z"; }') WHERE o = 0;
+SELECT a['x'] FROM applied(':external { --x: "y"; } #intro { --x: "z"; }') WHERE o = 0;
 ----
 z
 
 statement error
-SELECT dcs_apply(doc, ':chrome { --x: "y"; }', true) FROM fx;
+SELECT dcs_apply(doc, ':external { --x: "y"; }', true) FROM fx;
 ----
 not-yet
 

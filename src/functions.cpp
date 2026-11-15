@@ -7,6 +7,8 @@
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "duckdb/catalog/default/default_functions.hpp"
+#include "duckdb/parser/parsed_data/create_macro_info.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 
 namespace duckdb {
@@ -239,6 +241,18 @@ void RegisterFunctions(ExtensionLoader &loader) {
 		apply.AddFunction(fn);
 	}
 	loader.RegisterFunction(apply);
+
+	// D7: dcs_apply, then duck_block_utils#79's parser on the blocks -dcs-as: table marked.
+	// The macro binds duck_blocks_parse_embedded when called, so dmb loads without
+	// duck_block_utils, and a call without it fails naming the missing function.
+	DefaultMacro parsed {};
+	parsed.schema = DEFAULT_SCHEMA;
+	parsed.name = "dcs_apply_parsed";
+	parsed.macro_definition =
+	    "(blocks, sheet) AS list_transform(dcs_apply(blocks, sheet), lambda b: "
+	    "CASE WHEN b.attributes['dcs-as'] = 'table' THEN duck_blocks_parse_embedded([b])[1] ELSE b END)";
+	auto parsed_info = DefaultFunctionGenerator::CreateInternalMacroInfo(parsed);
+	loader.RegisterFunction(*parsed_info);
 }
 
 } // namespace dmb

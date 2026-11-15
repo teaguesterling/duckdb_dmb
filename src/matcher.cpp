@@ -30,6 +30,64 @@ vector<idx_t> SectionExtent(const BlockTree &tree, idx_t h) {
 Matcher::Matcher(const BlockTree &tree_p) : tree(tree_p) {
 }
 
+bool IsDataLanguage(const string *language) {
+	if (!language) {
+		return false;
+	}
+	string l = *language;
+	std::transform(l.begin(), l.end(), l.begin(), [](unsigned char c) { return std::tolower(c); });
+	return l == "csv" || l == "tsv" || l == "json" || l == "jsonl" || l == "yaml";
+}
+
+bool Matcher::IsMeta(idx_t node) const {
+	auto &n = tree.nodes[node];
+	return n.element_type == "metadata" || n.kind == "value";
+}
+
+//! A paragraph (or plain) whose only content is `inline_type` elements: every inline outside
+//! them is whitespace, and it holds at least one.
+bool Matcher::OnlyInline(idx_t node, const string &inline_type) const {
+	auto &n = tree.nodes[node];
+	if (n.element_type != "paragraph" && n.element_type != "plain") {
+		return false;
+	}
+	if (n.content.find_first_not_of(" \t\r\n") != string::npos) {
+		return false;
+	}
+	bool found = false;
+	for (idx_t j = node + 1; j < n.subtree_end;) {
+		auto &c = tree.nodes[j];
+		if (c.kind != "inline") {
+			return false;
+		}
+		if (c.element_type == inline_type) {
+			found = true;
+			j = c.subtree_end;
+			continue;
+		}
+		if (c.content.find_first_not_of(" \t\r\n") != string::npos) {
+			return false;
+		}
+		j++;
+	}
+	return found;
+}
+
+void Matcher::CountRoles() {
+	if (roles_counted) {
+		return;
+	}
+	for (idx_t i = 0; i < tree.nodes.size(); i++) {
+		auto role = tree.Attr(i, "role");
+		if (role && *role == "main") {
+			main_count++;
+		} else if (role && *role == "article") {
+			article_count++;
+		}
+	}
+	roles_counted = true;
+}
+
 Matcher::~Matcher() {
 }
 
@@ -320,6 +378,74 @@ bool Matcher::MatchSimple(const SimpleSelector &s, idx_t node) {
 			return count == 1;
 		}
 		return NthMatches(s.a, s.b, name == "nth-of-type" ? pos : count - pos + 1);
+	}
+	if (name == "meta") {
+		return IsMeta(node);
+	}
+	if (name == "body") {
+		if (n.kind != "block" || IsMeta(node)) {
+			return false;
+		}
+		for (auto p = n.parent; p >= 0; p = tree.nodes[p].parent) {
+			if (IsMeta(static_cast<idx_t>(p))) {
+				return false;
+			}
+		}
+		return true;
+	}
+	if (name == "chrome") {
+		auto role = tree.Attr(node, "role");
+		if (role && (*role == "nav" || *role == "header" || *role == "footer" || *role == "aside")) {
+			return true;
+		}
+		return OnlyInline(node, "link");
+	}
+	if (name == "main") {
+		auto role = tree.Attr(node, "role");
+		if (!role) {
+			return false;
+		}
+		if (*role == "main") {
+			return true;
+		}
+		// else the single article, when nothing claims role=main (reader mode, duckeye#28)
+		CountRoles();
+		return *role == "article" && main_count == 0 && article_count == 1;
+	}
+	if (name == "link-only") {
+		return OnlyInline(node, "link");
+	}
+	if (name == "image-only") {
+		return OnlyInline(node, "image");
+	}
+	if (name == "data") {
+		if (n.element_type == "table") {
+			return true;
+		}
+		return n.element_type == "code" && IsDataLanguage(tree.Attr(node, "language"));
+	}
+	if (name == "caption") {
+		return n.element_type == "caption";
+	}
+	if (name == "footnote") {
+		auto role = tree.Attr(node, "role");
+		auto classes = tree.Classes(node);
+		return n.element_type == "note" || (role && (*role == "doc-footnote" || *role == "footnote")) ||
+		       std::find(classes.begin(), classes.end(), "footnote") != classes.end();
+	}
+	if (name == "callout") {
+		auto classes = tree.Classes(node);
+		bool callout = std::find(classes.begin(), classes.end(), "callout") != classes.end();
+		return callout && (s.text_arg.empty() || std::find(classes.begin(), classes.end(), s.text_arg) != classes.end());
+	}
+	if (name == "lang") {
+		auto lang = tree.Attr(node, "lang");
+		if (!lang) {
+			return false;
+		}
+		string l = *lang;
+		std::transform(l.begin(), l.end(), l.begin(), [](unsigned char c) { return std::tolower(c); });
+		return l == s.text_arg || l.compare(0, s.text_arg.size() + 1, s.text_arg + "-") == 0;
 	}
 	throw NotImplementedException("not-yet: dmb does not match :%s yet", name);
 }

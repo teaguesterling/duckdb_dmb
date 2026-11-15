@@ -17,6 +17,9 @@ namespace dmb {
 //! same or higher rank at its level, or a row at a smaller level. Inline rows included.
 vector<idx_t> SectionExtent(const BlockTree &tree, idx_t heading);
 
+//! csv, tsv, json, jsonl or yaml: the code-block languages :data and -dcs-as: table accept.
+bool IsDataLanguage(const string *language);
+
 //! Matches selectors against one document. Holds per-document caches, so make one per tree.
 class Matcher {
 public:
@@ -32,10 +35,15 @@ private:
 	bool Related(char comb, idx_t node, idx_t anchor) const;
 	bool InSection(const SimpleSelector &s, idx_t node);
 	duckdb_re2::RE2 &Regex(const string &pattern);
+	bool IsMeta(idx_t node) const;
+	bool OnlyInline(idx_t node, const string &inline_type) const;
+	void CountRoles();
 
 	const BlockTree &tree;
 	std::unordered_map<const SimpleSelector *, vector<bool>> sections;
 	std::unordered_map<string, std::unique_ptr<duckdb_re2::RE2>> regexes;
+	bool roles_counted = false;
+	idx_t main_count = 0, article_count = 0;
 };
 
 } // namespace dmb
