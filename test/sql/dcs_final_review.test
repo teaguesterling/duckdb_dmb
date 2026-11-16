@@ -126,6 +126,37 @@ SELECT dcs_select(doc, repeat(':not(', 100000) || 'p' || repeat(')', 100000)) FR
 ----
 deeper
 
+# Security review of fc07ac9: a quote inside a comment put the prescan in string mode, so the
+# deep nesting after it went unseen. The prescan now skips comments, and the value lexer and
+# token walk keep their own depth counts, so a prescan mismatch cannot remove the limit.
+query I
+SELECT min(code) FROM dcs_check('/* " */ p { --x: ' || repeat('slug(', 100000) || '1' || repeat(')', 100000) || '; } /* " */');
+----
+syntax
+
+# Braces nest without parentheses; they were measured safe (a syntax or nested-rule diagnostic).
+query I
+SELECT min(code) FROM dcs_check(repeat('p { ', 100000) || repeat('} ', 100000));
+----
+nested-rule
+
+query I
+SELECT min(code) FROM dcs_check(repeat('@media (format: x) { ', 100000) || repeat('} ', 100000));
+----
+nested-media
+
+# A long run of suffixes nests the selector compiler too.
+query I
+SELECT min(code) FROM dcs_check('p' || repeat('.a', 100000) || ' { display: none; }');
+----
+syntax
+
+# 33 unclosed "(" inside a comment are not nesting.
+query I
+SELECT count(*) FROM dcs_check('/* ' || repeat('(', 40) || ' */ p { display: none; }');
+----
+0
+
 # A sheet within the limit still works: 20 levels of :not().
 query I
 SELECT count(*) FROM dcs_check(repeat(':not(', 20) || 'p' || repeat(')', 20) || ' { display: none; }');

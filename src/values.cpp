@@ -54,6 +54,18 @@ struct Lexer {
 
 	//! Tokens until `stop` (')' or ',') or the end; args are split on top-level commas.
 	bool List(vector<Token> &out, bool in_args) {
+		if (++depth > MAX_NESTING) {
+			error = "functions nested deeper than " + std::to_string(MAX_NESTING) + " levels";
+			return false;
+		}
+		bool ok = ListBody(out, in_args);
+		depth--;
+		return ok;
+	}
+
+	int depth = 0;
+
+	bool ListBody(vector<Token> &out, bool in_args) {
 		while (true) {
 			SkipSpace();
 			if (i >= s.size()) {

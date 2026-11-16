@@ -83,7 +83,7 @@ bool Blank(const string &s) {
 	return s.find_first_not_of(" \t\r\n") == string::npos;
 }
 
-ValueToken ToToken(TsCtx &ctx, TSNode n) {
+ValueToken ToToken(TsCtx &ctx, TSNode n, int depth = 0) {
 	ValueToken tok;
 	auto type = NodeType(n);
 	if (type == "string_value") {
@@ -105,7 +105,9 @@ ValueToken ToToken(TsCtx &ctx, TSNode n) {
 				for (uint32_t j = 0; j < ts_node_named_child_count(c); j++) {
 					auto a = ts_node_named_child(c, j);
 					if (NodeType(a) != "comment") {
-						tok.args.push_back(ToToken(ctx, a));
+						if (depth < MAX_NESTING) { // the prescan bounds this too; never rely on one guard
+							tok.args.push_back(ToToken(ctx, a, depth + 1));
+						}
 					}
 				}
 			}
@@ -443,9 +445,15 @@ bool NestingTooDeep(const string &text) {
 		if (quote) {
 			if (c == '\\') {
 				i++;
-			} else if (c == quote) {
+			} else if (c == quote || c == '\n') { // a CSS string ends at a newline
 				quote = 0;
 			}
+		} else if (c == '/' && i + 1 < text.size() && text[i + 1] == '*') {
+			auto end = text.find("*/", i + 2);
+			if (end == string::npos) {
+				break;
+			}
+			i = end + 1; // comments are not nesting, and a quote inside one opens no string
 		} else if (c == '"' || c == '\'') {
 			quote = c;
 		} else if (c == '(' || c == '[') {

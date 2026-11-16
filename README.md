@@ -167,9 +167,10 @@ dmb reports each of these as a `not-yet` diagnostic. It never skips one silently
 - `-dcs-content-as` formats other than markdown and html: no per-row reader exists, so the
   content stays a `raw` block with `attributes['format']` (diagnostic `no-reader`).
 
-Parentheses and brackets may nest 32 levels deep in a sheet or a selector, and a selector may
-chain 256 compounds. Deeper is a `syntax` error: the limit keeps a hostile sheet from crashing
-the process.
+Parentheses and brackets may nest 32 levels deep in a sheet or a selector, outside strings and
+comments. The selector compiler may nest 256 levels: compounds, suffixes such as `.a.b`, and
+pseudo-class arguments. Deeper is a `syntax` error. The tests send 100,000-deep functions,
+`:not()`, braces, `@media` and suffix runs: each gets a diagnostic, not a crash.
 
 ## Errors
 
