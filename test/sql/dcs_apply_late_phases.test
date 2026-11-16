@@ -1,0 +1,148 @@
+# name: test/sql/dcs_apply_late_phases.test
+# description: dcs_apply phases 5-7 -- order, @frontmatter, presentation properties into attributes['style']
+# group: [sql]
+
+require dmb
+
+statement ok
+CREATE MACRO b(k, t, c, lvl, attrs, o) AS
+    {'kind': k, 'element_type': t, 'content': c, 'level': lvl, 'encoding': 'text',
+     'attributes': attrs::MAP(VARCHAR, VARCHAR), 'element_order': o};
+
+#  0 heading "Field guide" h1 | 1 paragraph.fn "Footnote" > 2 text "[1] see"
+#  3 paragraph "One" | 4 list > 5 li "a", 6 li "b" | 7 paragraph "Two"
+statement ok
+CREATE TABLE fx AS SELECT [
+  b('block', 'heading', 'Field guide', 1, MAP {'heading_level': '1'}, 0),
+  b('block', 'paragraph', '', 1, MAP {'class': 'fn'}, 1),
+  b('inline', 'text', '[1] see', 2, MAP {}, 2),
+  b('block', 'paragraph', 'One', 1, MAP {}, 3),
+  b('block', 'list', '', 1, MAP {'list_type': 'bullet'}, 4),
+  b('block', 'list_item', 'a', 2, MAP {}, 5),
+  b('block', 'list_item', 'b', 2, MAP {}, 6),
+  b('block', 'paragraph', 'Two', 1, MAP {}, 7)
+] AS doc;
+
+statement ok
+CREATE MACRO rows(sheet) AS TABLE
+    SELECT u.element_order AS o, u.element_type AS t, coalesce(u.content, '') AS c, u.level AS l, u.attributes AS a
+    FROM (SELECT unnest(dcs_apply(doc, sheet)) AS u FROM fx);
+
+# Phase 5: order: n stable-sorts siblings, and a block moves with its whole subtree.
+query III
+SELECT o, t, c FROM rows('.fn { order: 1; }') ORDER BY o;
+----
+0	heading	Field guide
+1	paragraph	One
+2	list	(empty)
+3	list_item	a
+4	list_item	b
+5	paragraph	Two
+6	paragraph	(empty)
+7	text	[1] see
+
+query II
+SELECT o, c FROM rows('li:first-child { order: 1; }') WHERE t = 'list_item' ORDER BY o;
+----
+5	b
+6	a
+
+query II
+SELECT o, c FROM rows('p:contains("Two") { order: -1; }') WHERE o < 2 ORDER BY o;
+----
+0	Two
+1	Field guide
+
+statement error
+SELECT dcs_apply(doc, 'p { order: first; }', true) FROM fx;
+----
+bad-value
+
+# Phase 6: @frontmatter writes one metadata block (YAML, double-quoted values) at the start.
+# text(sel) is the text of the first block sel matches.
+query IIIII
+SELECT o, t, l, a['role'], replace(c, chr(10), '|') FROM rows('@frontmatter { title: text(h1); tags: "clippings"; }') WHERE o = 0;
+----
+0	metadata	1	frontmatter	title: "Field guide"|tags: "clippings"|
+
+query I
+SELECT count(*) FROM rows('@frontmatter { title: text(h1); }');
+----
+9
+
+# After a level-0 document root, not before it.
+query III
+SELECT u.element_order, u.element_type, u.level FROM (SELECT unnest(dcs_apply([
+  b('block', 'document', '', 0, MAP {}, 0),
+  b('block', 'paragraph', 'x', 1, MAP {}, 1)
+], '@frontmatter { tags: "a"; }')) AS u) ORDER BY 1;
+----
+0	document	0
+1	metadata	1
+2	paragraph	1
+
+# An existing front matter block keeps its other keys; a key the sheet sets is replaced.
+query I
+SELECT replace(dcs_apply([
+  b('block', 'metadata', 'title: Old' || chr(10) || 'author: Ann', 1, MAP {'role': 'frontmatter'}, 0),
+  b('block', 'paragraph', 'x', 1, MAP {}, 1)
+], '@frontmatter { title: "New"; tags: "t"; }')[1].content, chr(10), '|');
+----
+title: "New"|author: Ann|tags: "t"|
+
+# Quotes and backslashes are escaped, so the YAML stays valid.
+query I
+SELECT replace(dcs_apply([b('block', 'paragraph', 'x', 1, MAP {}, 0)], '@frontmatter { q: "say \"hi\" \\ bye"; }')[1].content, chr(10), '|');
+----
+q: "say \"hi\" \\ bye"|
+
+# dcs_rules lists front matter declarations under the selector @frontmatter.
+query III
+SELECT selector, property, value FROM dcs_rules('@frontmatter { title: text(h1:first-of-type); }');
+----
+@frontmatter	title	text(h1:first-of-type)
+
+# Phase 7: any other CSS property goes to attributes['style'], winners in source order.
+query II
+SELECT o, a['style'] FROM rows('p { color: red; } .fn { color: blue; font-weight: bold; }') WHERE t = 'paragraph' ORDER BY o;
+----
+1	color: blue; font-weight: bold
+3	color: red
+7	color: red
+
+# An existing style attribute comes first; the sheet's declarations follow, so they win.
+query I
+SELECT dcs_apply([b('block', 'paragraph', 'x', 1, MAP {'style': 'margin: 0'}, 0)], 'p { color: red; }')[1].attributes['style'];
+----
+margin: 0; color: red
+
+# A presentation property in strict mode is no longer a diagnostic; a mistyped -dcs- one still is.
+query I
+SELECT dcs_apply(doc, 'p { color: red; }', true)[4].attributes['style'] FROM fx;
+----
+color: red
+
+statement error
+SELECT dcs_apply(doc, 'p { -dcs-colour: red; }', true) FROM fx;
+----
+unknown-property
+
+# Security review: order on a document with a NULL row raised an INTERNAL error. Now the NULL row
+# is kept. It has no level, so it sorts as a top-level sibling with key 0: the stable sort puts it
+# before `a` (key 1), so it moves from index 1 to index 0.
+query I
+SELECT list_transform(dcs_apply([b('block', 'paragraph', 'a', 1, MAP {}, 0), NULL,
+    b('block', 'paragraph', 'b', 1, MAP {}, 2)], 'p:contains("a") { order: 1; }'), lambda x: coalesce(x.content, 'NULL'));
+----
+['NULL', b, a]
+
+# Security review: order was recursive and rescanned every level, so a deeply nested document
+# hung (300,000 levels did not finish in 10 minutes, measured). It is now one iterative pass.
+statement ok
+CREATE TABLE deep AS SELECT list(b('block', 'blockquote', '', (i + 1)::INTEGER, MAP {}, i::INTEGER) ORDER BY i) AS doc
+FROM range(200000) t(i);
+
+query II
+SELECT len(d), d[200000].level FROM (SELECT dcs_apply(doc, 'blockquote { order: 1; }') AS d FROM deep);
+----
+200000	200000

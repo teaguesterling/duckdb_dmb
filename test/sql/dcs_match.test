@@ -1,0 +1,85 @@
+# name: test/sql/dcs_match.test
+# description: dcs_select(blocks, selector) -- the element_orders of the blocks a selector matches
+# group: [sql]
+
+require dmb
+
+statement ok
+CREATE TYPE duck_block AS STRUCT(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER,
+    encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
+
+statement ok
+CREATE MACRO b(k, t, c, lvl, attrs, o) AS
+    {'kind': k, 'element_type': t, 'content': c, 'level': lvl, 'encoding': 'text',
+     'attributes': attrs::MAP(VARCHAR, VARCHAR), 'element_order': o}::duck_block;
+
+# The fixture, in element_order (inlines are children of their block, one level down):
+#   0 heading L1 "Intro" h1 #intro | 1 paragraph L1 + 2 text "Hello world"
+#   3 heading L1 "Comments" h2     | 4 paragraph L1 .note.wide + 5 text "First"
+#   6 list L1 > 7 list_item + 8 text "a", 9 list_item + 10 text "b"
+#   11 heading L1 "End" h2         | 12 paragraph L1 + 13 text "Bye"
+statement ok
+CREATE TABLE fx AS SELECT [
+  b('block', 'heading', 'Intro', 1, MAP {'heading_level': '1', 'id': 'intro'}, 0),
+  b('block', 'paragraph', '', 1, MAP {}, 1),
+  b('inline', 'text', 'Hello world', 2, MAP {}, 2),
+  b('block', 'heading', 'Comments', 1, MAP {'heading_level': '2'}, 3),
+  b('block', 'paragraph', '', 1, MAP {'class': 'note wide'}, 4),
+  b('inline', 'text', 'First', 2, MAP {}, 5),
+  b('block', 'list', '', 1, MAP {'list_type': 'bullet'}, 6),
+  b('block', 'list_item', '', 2, MAP {}, 7),
+  b('inline', 'text', 'a', 3, MAP {}, 8),
+  b('block', 'list_item', '', 2, MAP {}, 9),
+  b('inline', 'text', 'b', 3, MAP {}, 10),
+  b('block', 'heading', 'End', 1, MAP {'heading_level': '2'}, 11),
+  b('block', 'paragraph', '', 1, MAP {}, 12),
+  b('inline', 'text', 'Bye', 2, MAP {}, 13)
+] AS doc;
+
+query II
+SELECT s, dcs_select(doc, s) FROM fx, (VALUES
+  (1, 'paragraph'), (2, 'p'), (3, 'h2'), (4, '#intro'), (5, '.note'), (6, '[class~=wide]'),
+  (7, 'list > list_item'), (8, 'list_item + list_item'), (9, 'h1 ~ paragraph'),
+  (10, 'list_item:first-child'), (11, 'list_item:nth-child(2)'),
+  (12, 'paragraph:contains("world")'), (13, 'paragraph:matches("^B")'),
+  (14, ':has(> list_item)'), (15, 'paragraph:not(.note)'),
+  (16, ':section(h2:contains("Comments"))'), (17, ':section(h2:contains("Comments")) > list_item'),
+  (18, 'text'), (19, 'heading:empty')
+) v(i, s) ORDER BY i;
+----
+paragraph	[1, 4, 12]
+p	[1, 4, 12]
+h2	[3, 11]
+#intro	[0]
+.note	[4]
+[class~=wide]	[4]
+list > list_item	[7, 9]
+list_item + list_item	[9]
+h1 ~ paragraph	[1, 4, 12]
+list_item:first-child	[7]
+list_item:nth-child(2)	[9]
+paragraph:contains("world")	[1]
+paragraph:matches("^B")	[12]
+:has(> list_item)	[6]
+paragraph:not(.note)	[1, 12]
+:section(h2:contains("Comments"))	[3, 4, 6, 7, 9]
+:section(h2:contains("Comments")) > list_item	[7, 9]
+text	[]
+heading:empty	[]
+
+# Review Focus 3: a heading's flattened content is its text, even with inline children.
+query I
+SELECT dcs_select([
+  b('block', 'heading', 'Bold title', 1, MAP {'heading_level': '1'}, 0),
+  b('inline', 'strong', '', 2, MAP {}, 1),
+  b('inline', 'text', 'Bold', 3, MAP {}, 2),
+  b('inline', 'text', ' title', 2, MAP {}, 3)
+], 'heading:contains("Bold title")');
+----
+[0]
+
+# A selector dmb refuses is an error by name, never an empty result (duckent).
+statement error
+SELECT dcs_select(doc, ':bogus') FROM fx;
+----
+unknown pseudo-class :bogus

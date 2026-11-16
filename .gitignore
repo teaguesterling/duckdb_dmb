@@ -1,0 +1,9 @@
+build/
+duckdb_unittest_tempdir/
+.superpowers/
+
+# blq
+.bird/*
+!.bird/hooks/
+!.bird/config.toml
+!.bird/commands.toml

@@ -1,0 +1,11 @@
+[submodule "duckdb"]
+	path = duckdb
+	url = https://github.com/duckdb/duckdb
+	branch = v2.0-cyanoptera
+[submodule "extension-ci-tools"]
+	path = extension-ci-tools
+	url = https://github.com/duckdb/extension-ci-tools
+	branch = v2.0-cyanoptera
+[submodule "third_party/tree-sitter"]
+	path = third_party/tree-sitter
+	url = https://github.com/tree-sitter/tree-sitter

@@ -1,0 +1,186 @@
+# name: test/sql/dcs_final_review.test
+# description: fixes from the whole-branch review; each case was measured failing on 2026-11-15
+# group: [sql]
+
+require dmb
+
+statement ok
+CREATE TYPE duck_block AS STRUCT(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER,
+    encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
+
+statement ok
+CREATE MACRO b(k, t, c, lvl, attrs, o) AS
+    {'kind': k, 'element_type': t, 'content': c, 'level': lvl, 'encoding': 'text',
+     'attributes': attrs::MAP(VARCHAR, VARCHAR), 'element_order': o}::duck_block;
+
+statement ok
+CREATE TABLE fx AS SELECT [
+  b('block', 'heading', 'Intro', 1, MAP {'heading_level': '1', 'id': 'keep-me'}, 0),
+  b('block', 'heading', 'Comments', 1, MAP {'heading_level': '2'}, 1),
+  b('block', 'paragraph', 'Nice post!', 1, MAP {}, 2)
+] AS doc;
+
+# F1: phase-1 properties on ::before/::after did nothing and said nothing.
+query I
+SELECT count(*) FROM dcs_check('h2::after { -dcs-id: auto; -dcs-class: +x; }') WHERE code = 'not-yet';
+----
+2
+
+# F2: an empty selector argument, or a pseudo-element inside one, refused the rule silently.
+query I
+SELECT code FROM dcs_check('p:not() { display: none; }');
+----
+missing-argument
+
+query I
+SELECT code FROM dcs_check('p:has() { display: none; }');
+----
+missing-argument
+
+query I
+SELECT code FROM dcs_check(':section(h2::after) { display: none; }');
+----
+pseudo-element-in-argument
+
+# F3: :h() took any argument; :h(two) matched every block that is not a heading.
+query I
+SELECT code FROM dcs_check('p:h(two) { display: none; }');
+----
+bad-argument
+
+query I
+SELECT code FROM dcs_check(':h(7) { display: none; }');
+----
+bad-argument
+
+query I
+SELECT count(*) FROM dcs_check(':h(2) { display: none; }');
+----
+0
+
+query I
+SELECT len(dcs_apply(doc, ':h(two) { display: none; }')) FROM fx;
+----
+3
+
+# F4: -dcs-replace with a bad regular expression did nothing and said nothing.
+query I
+SELECT code FROM dcs_check('p { -dcs-replace: "(" "x"; }');
+----
+bad-regex
+
+# F5: :external was reported only when matching reached it; dcs_check said nothing.
+query I
+SELECT code FROM dcs_check('p:external { display: none; }');
+----
+not-yet
+
+# F6: a diagnostic cut a multi-byte character at byte 40, and dcs_check aborted (Invalid unicode).
+query I
+SELECT count(*) > 0 FROM dcs_check('@font-face { font-family: "日本語日本語日本語日本語日本語"; }');
+----
+true
+
+query I
+SELECT count(*) > 0 FROM dcs_check('@font-face { a: "ab日本語日本語日本語日本語日本語日本語"; }');
+----
+true
+
+# F7: @frontmatter text(sel) lost the selector's arguments: text(h2:contains("Comments")) failed.
+query I
+SELECT replace(dcs_apply(doc, '@frontmatter { title: text(h2:contains("Comments")); }')[1].content, chr(10), '|') FROM fx;
+----
+title: "Comments"|
+
+# A selector list in text() is refused by name, not read as a descendant selector.
+statement error
+SELECT dcs_apply(doc, '@frontmatter { title: text(h1, h2); }', true) FROM fx;
+----
+bad-value
+
+# F8: @import is a not-yet diagnostic (plan D8).
+query I
+SELECT code FROM dcs_check('@import "x.dcs";');
+----
+not-yet
+
+# F12: a value or selector nested very deep crashed the process (segfault, measured) or ran for
+# minutes. Nesting past the limit is now a syntax diagnostic.
+query I
+SELECT code FROM dcs_check('p { --x: ' || repeat('slug(', 100000) || '1' || repeat(')', 100000) || '; }');
+----
+syntax
+
+query I
+SELECT code FROM dcs_check(repeat(':not(', 100000) || 'p' || repeat(')', 100000) || ' { display: none; }');
+----
+syntax
+
+query I
+SELECT code FROM dcs_check(repeat('p ', 100000) || '{ display: none; }');
+----
+syntax
+
+statement error
+SELECT dcs_select(doc, repeat(':not(', 100000) || 'p' || repeat(')', 100000)) FROM fx;
+----
+deeper
+
+# Security review of fc07ac9: a quote inside a comment put the prescan in string mode, so the
+# deep nesting after it went unseen. The prescan now skips comments, and the value lexer and
+# token walk keep their own depth counts, so a prescan mismatch cannot remove the limit.
+query I
+SELECT min(code) FROM dcs_check('/* " */ p { --x: ' || repeat('slug(', 100000) || '1' || repeat(')', 100000) || '; } /* " */');
+----
+syntax
+
+# Braces nest without parentheses; they were measured safe (a syntax or nested-rule diagnostic).
+query I
+SELECT min(code) FROM dcs_check(repeat('p { ', 100000) || repeat('} ', 100000));
+----
+nested-rule
+
+query I
+SELECT min(code) FROM dcs_check(repeat('@media (format: x) { ', 100000) || repeat('} ', 100000));
+----
+nested-media
+
+# A long run of suffixes nests the selector compiler too.
+query I
+SELECT min(code) FROM dcs_check('p' || repeat('.a', 100000) || ' { display: none; }');
+----
+syntax
+
+# 33 unclosed "(" inside a comment are not nesting.
+query I
+SELECT count(*) FROM dcs_check('/* ' || repeat('(', 40) || ' */ p { display: none; }');
+----
+0
+
+# A sheet within the limit still works: 20 levels of :not().
+query I
+SELECT count(*) FROM dcs_check(repeat(':not(', 20) || 'p' || repeat(')', 20) || ' { display: none; }');
+----
+0
+
+# F13 (test gap in I1): the too-large nth argument is a bad-nth diagnostic.
+query I
+SELECT code FROM dcs_check('li:nth-child(99999999999n) { a: b; }');
+----
+bad-nth
+
+# F14 (test gap): -dcs-id: auto keeps an id a reader set, even when it differs from the slug.
+query II
+SELECT u.element_order, u.attributes['id'] FROM (SELECT unnest(dcs_apply(doc, 'heading { -dcs-id: auto; }')) AS u FROM fx);
+----
+0	keep-me
+1	comments
+2	NULL
+
+# F10: many equal headings get distinct ids in order (the suffix search no longer restarts at 1).
+query II
+SELECT count(DISTINCT u.attributes['id']), max(u.attributes['id']) FILTER (WHERE u.element_order = 3)
+FROM (SELECT unnest(dcs_apply(list_transform(range(5000), lambda i: b('block', 'heading', 'Answer', 1,
+    MAP {'heading_level': '2'}, i::INTEGER)), 'heading { -dcs-id: auto; }')) AS u);
+----
+5000	answer-3

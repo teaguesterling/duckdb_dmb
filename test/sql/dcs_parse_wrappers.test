@@ -1,0 +1,21 @@
+# name: test/sql/dcs_parse_wrappers.test
+# description: the D9 reader wrappers name the reader they need when it is not loaded
+# group: [sql]
+
+require dmb
+
+# dcs_parse_markdown and dcs_parse_html each need one reader extension. DuckDB binds every
+# function a macro body names, so each reader has its own wrapper (Task 8 ruling); a missing
+# reader is an error naming its function. The parse itself is tested with the real readers in
+# test/integration/readers.sh, which this unittest binary cannot load.
+statement error
+SELECT dcs_parse_markdown([{'kind': 'block', 'element_type': 'paragraph', 'content': 'x', 'level': 1,
+    'encoding': 'text', 'attributes': MAP {}::MAP(VARCHAR, VARCHAR), 'element_order': 0}]);
+----
+parse_markdown_to_duck_blocks
+
+statement error
+SELECT dcs_parse_html([{'kind': 'block', 'element_type': 'paragraph', 'content': 'x', 'level': 1,
+    'encoding': 'text', 'attributes': MAP {}::MAP(VARCHAR, VARCHAR), 'element_order': 0}]);
+----
+html_to_duck_blocks

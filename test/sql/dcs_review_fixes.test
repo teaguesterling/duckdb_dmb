@@ -1,0 +1,75 @@
+# name: test/sql/dcs_review_fixes.test
+# description: the whole-branch review findings (C1, I1-I4), each pinned before its fix
+# group: [sql]
+
+require dmb
+
+statement ok
+CREATE TYPE duck_block AS STRUCT(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER,
+    encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
+
+statement ok
+CREATE MACRO b(k, t, c, lvl, attrs, o) AS
+    {'kind': k, 'element_type': t, 'content': c, 'level': lvl, 'encoding': 'text',
+     'attributes': attrs::MAP(VARCHAR, VARCHAR), 'element_order': o}::duck_block;
+
+# C1: a tight list keeps its text in its items' content, with no inline children (the duck_blocks
+# content rule). Its text must be that content, so :contains finds it and dedupe keeps it.
+statement ok
+CREATE TABLE tight AS SELECT [
+  b('block', 'list', '', 1, MAP {'list_type': 'bullet'}, 0),
+  b('block', 'list_item', 'apples', 2, MAP {}, 1),
+  b('block', 'list', '', 1, MAP {'list_type': 'bullet'}, 2),
+  b('block', 'list_item', 'pears', 2, MAP {}, 3),
+  b('block', 'image', '', 1, MAP {'src': 'a.png'}, 4),
+  b('block', 'image', '', 1, MAP {'src': 'b.png'}, 5)
+] AS doc;
+
+query I
+SELECT dcs_select(doc, 'list:contains("pears")') FROM tight;
+----
+[2]
+
+# Distinct text survives dedupe, and empty text is never a duplicate.
+query I
+SELECT len(dcs_apply(doc, 'list, image { -dcs-dedupe: text; }')) FROM tight;
+----
+6
+
+# I1: an nth argument too large for an integer is a diagnostic, never an aborted query.
+query I
+SELECT count(*) FROM dcs_rules('li:nth-child(99999999999n) { a: b; } p { c: d; }');
+----
+2
+
+query I
+SELECT len(dcs_apply(doc, 'li:nth-child(99999999999n) { --a: "b"; }')) FROM tight;
+----
+6
+
+# I2: a comment is not part of a value.
+query I
+SELECT value FROM dcs_rules('p { --a: "x" /* why */; }');
+----
+"x"
+
+query I
+SELECT len(dcs_apply(doc, 'image { display: none /* hide */; }')) FROM tight;
+----
+4
+
+# I3: ids are unique in a document, however they were set (D6's -1, -2 rule).
+query I
+SELECT list_transform(dcs_apply([
+  b('block', 'heading', 'Notes', 1, MAP {'heading_level': '2'}, 0),
+  b('block', 'heading', 'Notes', 1, MAP {'heading_level': '2'}, 1)
+], 'h2 { -dcs-id: slug(text()); }'), lambda x: x.attributes['id']);
+----
+[notes, notes-1]
+
+# I4: bind checks field types, and names the field.
+statement error
+SELECT dcs_select([{'kind': 'block', 'element_type': 'p', 'content': '', 'level': 1, 'encoding': 'text',
+    'attributes': {'id': 'x'}, 'element_order': 0}], 'p');
+----
+field 'attributes' must be MAP(VARCHAR, VARCHAR)

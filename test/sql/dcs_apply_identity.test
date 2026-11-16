@@ -1,0 +1,227 @@
+# name: test/sql/dcs_apply_identity.test
+# description: dcs_apply phase 1 -- ids, classes and custom-property attributes, and the cascade
+# group: [sql]
+
+require dmb
+
+statement ok
+CREATE TYPE duck_block AS STRUCT(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER,
+    encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
+
+statement ok
+CREATE MACRO b(k, t, c, lvl, attrs, o) AS
+    {'kind': k, 'element_type': t, 'content': c, 'level': lvl, 'encoding': 'text',
+     'attributes': attrs::MAP(VARCHAR, VARCHAR), 'element_order': o}::duck_block;
+
+# The fixture from dcs_match.test.
+statement ok
+CREATE TABLE fx AS SELECT [
+  b('block', 'heading', 'Intro', 1, MAP {'heading_level': '1', 'id': 'intro'}, 0),
+  b('block', 'paragraph', '', 1, MAP {}, 1),
+  b('inline', 'text', 'Hello world', 2, MAP {}, 2),
+  b('block', 'heading', 'Comments', 1, MAP {'heading_level': '2'}, 3),
+  b('block', 'paragraph', '', 1, MAP {'class': 'note wide'}, 4),
+  b('inline', 'text', 'First', 2, MAP {}, 5),
+  b('block', 'list', '', 1, MAP {'list_type': 'bullet'}, 6),
+  b('block', 'list_item', '', 2, MAP {}, 7),
+  b('inline', 'text', 'a', 3, MAP {}, 8),
+  b('block', 'list_item', '', 2, MAP {}, 9),
+  b('inline', 'text', 'b', 3, MAP {}, 10),
+  b('block', 'heading', 'End', 1, MAP {'heading_level': '2'}, 11),
+  b('block', 'paragraph', '', 1, MAP {}, 12),
+  b('inline', 'text', 'Bye', 2, MAP {}, 13)
+] AS doc;
+
+statement ok
+CREATE MACRO applied(sheet) AS TABLE
+    SELECT u.element_order AS o, u.element_type AS t, u.attributes AS a
+    FROM (SELECT unnest(dcs_apply(doc, sheet)) AS u FROM fx);
+
+# -dcs-id with a value sets attributes['id'].
+query II
+SELECT o, a['id'] FROM applied('h2 { -dcs-id: slug(text()); }') WHERE t = 'heading' ORDER BY o;
+----
+0	intro
+3	comments
+11	end
+
+# -dcs-id: auto fills only the ids a reader left out (order 0 keeps its own).
+query II
+SELECT o, a['id'] FROM applied('heading { -dcs-id: auto; }') WHERE t = 'heading' ORDER BY o;
+----
+0	intro
+3	comments
+11	end
+
+# auto de-duplicates within the document, as pandoc does (measured: Notes, Notes -> notes, notes-1).
+query II
+SELECT u.element_order, u.attributes['id'] FROM (SELECT unnest(dcs_apply([
+  b('block', 'heading', 'Notes', 1, MAP {'heading_level': '2'}, 0),
+  b('block', 'heading', 'Notes', 1, MAP {'heading_level': '2'}, 1)
+], 'heading { -dcs-id: auto; }')) AS u);
+----
+0	notes
+1	notes-1
+
+# slug() is pandoc's auto_identifiers rule (Teague, 2026-11-14: "Pandoc's rule, everywhere";
+# duckdb_markdown#111). Every expected value below was MEASURED with pandoc 3.1.3 on longbottom,
+# `pandoc -f markdown-smart -t html` (smart punctuation off, so the heading text is the plain
+# text dmb sees). The rule: lower-case across Unicode; keep letters, numbers, whitespace, _ - and .;
+# join whitespace-separated words with '-'; drop everything before the first letter; empty -> section.
+# test/differential/slug_pandoc.sh re-runs this comparison against pandoc itself.
+statement ok
+CREATE TABLE slug_cases AS SELECT * FROM (VALUES
+  (0, 'Zoë''s notes'),
+  (1, 'Café'),
+  (2, '  Hello,  World -- 2026! '),
+  (3, 'snake_case Field guide'),
+  (4, '1. Introduction'),
+  (5, 'ÉCOLE Ünd'),
+  (6, 'a -- b'),
+  (7, '!!!'),
+  (8, '日本語の見出し'),
+  (9, 'v1.2 release'),
+  (10, 'Field guide'),
+  (11, 'Ünïcödé — dash'),
+  (12, 'tab	separated'),
+  (13, 'x²'),
+  (14, 'İstanbul'),
+  (15, 'naïve café')
+) t(i, heading);
+
+query II
+SELECT c.i, list_transform(dcs_apply([b('block', 'heading', c.heading, 1, MAP {'heading_level': '2'}, 0)],
+    'heading { -dcs-id: auto; }'), lambda x: x.attributes['id'])[1]
+FROM slug_cases c ORDER BY c.i;
+----
+0	zoës-notes
+1	café
+2	hello-world----2026
+3	snake_case-field-guide
+4	introduction
+5	école-ünd
+6	a----b
+7	section
+8	日本語の見出し
+9	v1.2-release
+10	field-guide
+11	ünïcödé-dash
+12	tab-separated
+13	x²
+14	istanbul
+15	naïve-café
+
+# slug() as a function gives the same rule.
+query I
+SELECT a['x'] FROM applied('paragraph { --x: slug("1. Café, naïve!"); }') WHERE o = 1;
+----
+café-naïve
+
+# -dcs-class adds and removes, keeping the existing order.
+query I
+SELECT a['class'] FROM applied('.note { -dcs-class: +callout -wide; }') WHERE o = 4;
+----
+note callout
+
+# --name sets attributes['name'].
+query II
+SELECT o, a['audience'] FROM applied('paragraph { --audience: "kids"; }') WHERE t = 'paragraph' ORDER BY o;
+----
+1	kids
+4	kids
+12	kids
+
+# --name: unset removes it.
+query I
+SELECT cardinality(u.attributes) FROM (SELECT unnest(dcs_apply([
+  b('block', 'image', '', 1, MAP {'src': 'a.png', 'title': 'A'}, 0)
+], 'img { --title: unset; }')) AS u);
+----
+1
+
+# Reserved keys are set only through their own properties: refused, and the block is unchanged.
+query I
+SELECT a['heading_level'] FROM applied('h1 { --heading_level: 3; }') WHERE o = 0;
+----
+1
+
+statement error
+SELECT dcs_apply(doc, 'h1 { --heading_level: 3; }', true) FROM fx;
+----
+reserved-attribute at line 1
+
+# The cascade: specificity beats source order; then the later rule wins.
+query II
+SELECT o, a['x'] FROM applied('p { --x: "a"; } .note { --x: "b"; } p { --x: "c"; }') WHERE t = 'paragraph' ORDER BY o;
+----
+1	c
+4	b
+12	c
+
+# Match once, after phase 1 (spec, "The cascade"): phase 1 (-dcs-id, -dcs-class) matches the
+# input; every other property matches the document after phase 1, so it sees those ids and classes.
+# Ids are unique (review I3), so the second h2 gets z-1 and #z reaches only the first.
+query II
+SELECT o, a['hit'] FROM applied('h2 { -dcs-id: "z"; } #z { --hit: "y"; }') WHERE t = 'heading' ORDER BY o;
+----
+0	NULL
+3	y
+11	NULL
+
+query II
+SELECT o, a['hit'] FROM applied('h2 { -dcs-class: +k; } .k { --hit: "y"; }') WHERE t = 'heading' ORDER BY o;
+----
+0	NULL
+3	y
+11	y
+
+# A phase-1 rule does not see another phase-1 rule's result: it matches the input.
+query II
+SELECT o, a['class'] FROM applied('h2 { -dcs-id: "z"; } #z { -dcs-class: +seen; }') WHERE t = 'heading' ORDER BY o;
+----
+0	NULL
+3	NULL
+11	NULL
+
+# A rule dmb can't use yet is skipped with a diagnostic, never an empty result: strict raises it.
+query I
+SELECT a['x'] FROM applied(':external { --x: "y"; } #intro { --x: "z"; }') WHERE o = 0;
+----
+z
+
+statement error
+SELECT dcs_apply(doc, ':external { --x: "y"; }', true) FROM fx;
+----
+not-yet
+
+statement error
+SELECT dcs_apply(doc, ':bogus { --x: "y"; }', true) FROM fx;
+----
+unknown-pseudo-class
+
+# Review Focus 4: empty and NULL inputs.
+query I
+SELECT dcs_apply([]::duck_block[], 'p { --a: "b"; }');
+----
+[]
+
+query I
+SELECT dcs_apply(NULL::duck_block[], 'p { --a: "b"; }');
+----
+NULL
+
+query I
+SELECT dcs_apply(doc, '') = doc FROM fx;
+----
+true
+
+query I
+SELECT dcs_apply(doc, NULL) FROM fx;
+----
+NULL
+
+# Bind names the missing field.
+statement error
+SELECT dcs_apply([{'kind': 'block'}], 'p {}');
+----
+no field 'element_type'

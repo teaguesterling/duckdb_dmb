@@ -1,0 +1,11 @@
+[commands.build]
+cmd = "srun -n 1 -c 8 --mem=16G -p batch -t 120 make release GEN=ninja"
+description = "Release build of dmb through Slurm"
+format = "make_error"
+lines = "+30-"
+
+[commands.test]
+cmd = "srun -n 1 -c 4 --mem=8G -p ci -t 30 build/release/test/unittest \"test/sql/*\""
+description = "sqllogictest suite through Slurm"
+format = "auto"
+lines = "+25-"

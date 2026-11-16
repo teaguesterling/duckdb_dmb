@@ -1,0 +1,70 @@
+# name: test/sql/dcs_pseudo_roles.test
+# description: the document-role pseudo-classes (spec, "Pseudo-classes": document roles, data)
+# group: [sql]
+
+require dmb
+
+statement ok
+CREATE MACRO b(k, t, c, lvl, attrs, o) AS
+    {'kind': k, 'element_type': t, 'content': c, 'level': lvl, 'encoding': 'text',
+     'attributes': attrs::MAP(VARCHAR, VARCHAR), 'element_order': o};
+
+#  0 metadata L1 (front matter)   | 1 section L1 role=nav > 2 paragraph (link only: 3 link > 4 text)
+#  5 section L1 role=main > 6 heading h1 | 7 paragraph > 8 text | 9 paragraph (image only: 10 image)
+#    11 code csv | 12 code python | 13 table | 14 div.callout.warning > 15 paragraph > 16 text
+#    17 caption | 18 div role=doc-footnote
+# 19 paragraph lang=en-GB > 20 text | 21 value row (kind value, metadata tree)
+statement ok
+CREATE TABLE fx AS SELECT [
+  b('block', 'metadata', 'title: x', 1, MAP {'role': 'frontmatter'}, 0),
+  b('block', 'section', '', 1, MAP {'role': 'nav'}, 1),
+  b('block', 'paragraph', '', 2, MAP {}, 2),
+  b('inline', 'link', '', 3, MAP {'href': '/a'}, 3),
+  b('inline', 'text', 'Home', 4, MAP {}, 4),
+  b('block', 'section', '', 1, MAP {'role': 'main'}, 5),
+  b('block', 'heading', 'Post', 2, MAP {'heading_level': '1'}, 6),
+  b('block', 'paragraph', '', 2, MAP {}, 7),
+  b('inline', 'text', 'Body text.', 3, MAP {}, 8),
+  b('block', 'paragraph', '', 2, MAP {}, 9),
+  b('inline', 'image', '', 3, MAP {'src': 'x.png'}, 10),
+  b('block', 'code', 'a,b', 2, MAP {'language': 'csv'}, 11),
+  b('block', 'code', 'print(1)', 2, MAP {'language': 'python'}, 12),
+  b('block', 'table', '{}', 2, MAP {}, 13),
+  b('block', 'div', '', 2, MAP {'class': 'callout warning'}, 14),
+  b('block', 'paragraph', '', 3, MAP {}, 15),
+  b('inline', 'text', 'Careful', 4, MAP {}, 16),
+  b('block', 'caption', 'Fig 1', 2, MAP {}, 17),
+  b('block', 'div', 'A footnote', 2, MAP {'role': 'doc-footnote'}, 18),
+  b('block', 'paragraph', '', 1, MAP {'lang': 'en-GB'}, 19),
+  b('inline', 'text', 'Hi', 2, MAP {}, 20),
+  b('value', 'string', 'Post', 1, MAP {'key': 'title'}, 21)
+] AS doc;
+
+query II
+SELECT s, dcs_select(doc, s) FROM fx, (VALUES
+  (1, ':meta'), (2, ':body'), (3, ':chrome'), (4, ':main'), (5, ':link-only'), (6, ':image-only'),
+  (7, ':data'), (8, ':callout'), (9, ':callout(warning)'), (10, ':callout(note)'), (11, ':caption'),
+  (12, ':footnote'), (13, ':lang(en)'), (14, ':lang(fr)'), (15, ':main > :data')
+) v(i, s) ORDER BY i;
+----
+:meta	[0, 21]
+:body	[1, 2, 5, 6, 7, 9, 11, 12, 13, 14, 15, 17, 18, 19]
+:chrome	[1, 2]
+:main	[5]
+:link-only	[2]
+:image-only	[9]
+:data	[11, 13]
+:callout	[14]
+:callout(warning)	[14]
+:callout(note)	[]
+:caption	[17]
+:footnote	[18]
+:lang(en)	[19]
+:lang(fr)	[]
+:main > :data	[11, 13]
+
+# :external and :internal need the document's host, which dmb doesn't know yet: refused by name.
+statement error
+SELECT dcs_select(doc, ':external') FROM fx;
+----
+not-yet
