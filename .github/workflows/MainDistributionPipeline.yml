@@ -1,0 +1,44 @@
+#
+# Build and test dmb with DuckDB's reusable extension distribution workflow.
+#
+name: Main Extension Distribution Pipeline
+on:
+  # Pushes build only on main. A push to a PR branch fires a push run AND a
+  # pull_request run for the same commit, so an unfiltered push trigger builds
+  # every PR twice. The pull_request run is the one that matters for a PR.
+  # Cost: a branch with no PR open gets no CI until the PR opens. Dispatch
+  # still runs on any branch. (Same trigger as sitting_duck and duckdb_markdown.)
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ github.head_ref || '' }}-${{ github.base_ref || '' }}-${{ github.ref != 'refs/heads/main' && github.sha || '' }}
+  cancel-in-progress: true
+
+jobs:
+  # Copied from sitting_duck's duckdb-v2-test-coverage job, the fleet's measured
+  # working config for TESTS on v2.0.0 (158 passed there, 2026-10-25).
+  #
+  # duckdb_version is the v2.0.0 TAG, the same commit as the duckdb submodule
+  # (d54cbbe3). No duckdb_tag: in duckdb_webbed, setting it made every test skip
+  # (0 passed, 123 skipped) while the check stayed green.
+  #
+  # linux_amd64 only, for now. dmb has no other platform need yet; widen this
+  # by removing entries from exclude_archs before a community-extension PR.
+  duckdb-stable-build:
+    name: Build extension binaries
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
+    with:
+      duckdb_version: v2.0.0
+      ci_tools_version: main
+      extension_name: dmb
+      exclude_archs: 'windows_amd64;windows_amd64_mingw;osx_amd64;osx_arm64;wasm_mvp;wasm_eh;wasm_threads;linux_arm64'
+      # A test file that cannot load dmb SKIPS on `require dmb`, and the runner
+      # still prints success. `--require dmb` makes that a failure instead.
+      # T is the test pattern ci-tools hands run_tests.py (`T ?=` in
+      # duckdb_extension.Makefile, so this env var wins). Read the result as
+      # `ran tests: N passed` in the Test step's log; N == 0 means no coverage,
+      # whatever colour the check is.
+      test_config: '{"test_env_variables": {"T": "--test-flags \"--require dmb\" \"test/sql/*\""}}'
