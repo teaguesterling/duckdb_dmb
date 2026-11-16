@@ -317,6 +317,7 @@ struct Engine {
 		result.diagnostics = s.diagnostics;
 	}
 
+	bool as_table_warned = false;
 	std::set<int32_t> value_reported; // declarations whose value error is already a diagnostic
 
 	void Diag(const string &severity, const string &code, const string &message, SourcePos pos) {
@@ -713,8 +714,14 @@ struct Engine {
 					// diagnosed by CheckDeclarations
 				} else if (v == "table") {
 					if (type == "code" && IsDataLanguage(tree.Attr(i, "language"))) {
-						a["dcs-as"] = "table"; // D7: dcs_apply_parsed converts it
+						a["dcs-as"] = "table"; // D7: marked for a converter
 						record(i, as->second, type, "table (marked)");
+						if (!as_table_warned) {
+							as_table_warned = true;
+							Diag("warning", "not-yet",
+							     "-dcs-as: table marks the block, but the conversion waits for duckdb_panduck#188",
+							     as->second.decl->pos);
+						}
 					} else {
 						Diag("error", "as-table-needs-data",
 						     "-dcs-as: table needs a code block in csv, tsv, json, jsonl or yaml", as->second.decl->pos);

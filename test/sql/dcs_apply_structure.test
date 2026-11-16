@@ -83,7 +83,8 @@ SELECT (SELECT a['heading_level'] FROM rows('h2 { -dcs-level: +1; }') WHERE o = 
 ----
 3	1	6	4
 
-# D7: -dcs-as: table marks an embedded-data code block; dcs_apply_parsed converts the marked ones.
+# D7 (amended 2026-11-15): -dcs-as: table marks an embedded-data code block. The conversion moved
+# to duckdb_panduck#188, which has not landed, so dmb converts nothing yet and says so.
 query II
 SELECT t, a['dcs-as'] FROM rows('code:data { -dcs-as: table; }') WHERE o = 4;
 ----
@@ -110,8 +111,15 @@ SELECT dcs_apply(doc, 'paragraph { display: contents; }', true) FROM fx;
 ----
 contents-has-inlines
 
-# The D7 wrapper needs duck_block_utils#79; without it, the error names the missing function.
+# The marked block is not a table yet: strict raises a not-yet that names where it waits.
+statement error
+SELECT dcs_apply(doc, 'code:data { -dcs-as: table; }', true) FROM fx;
+----
+<REGEX>:.*not-yet.*panduck#188.*
+
+# The dcs_apply_parsed wrapper called duck_block_utils#79's functions, which will not exist
+# (PR #84 closed unmerged). It is gone rather than a function that can only fail.
 statement error
 SELECT dcs_apply_parsed(doc, 'code:data { -dcs-as: table; }') FROM fx;
 ----
-duck_blocks_parse_embedded
+<REGEX>:.*dcs_apply_parsed does not exist.*

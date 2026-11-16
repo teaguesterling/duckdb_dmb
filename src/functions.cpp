@@ -350,18 +350,6 @@ void RegisterFunctions(ExtensionLoader &loader) {
 	}
 	loader.RegisterFunction(apply);
 
-	// D7: dcs_apply, then duck_block_utils#79's parser on the blocks -dcs-as: table marked.
-	// The macro binds duck_blocks_parse_embedded when called, so dmb loads without
-	// duck_block_utils, and a call without it fails naming the missing function.
-	DefaultMacro parsed {};
-	parsed.schema = DEFAULT_SCHEMA;
-	parsed.name = "dcs_apply_parsed";
-	parsed.macro_definition =
-	    "(blocks, sheet) AS list_transform(dcs_apply(blocks, sheet), lambda b: "
-	    "CASE WHEN b.attributes['dcs-as'] = 'table' THEN duck_blocks_parse_embedded([b])[1] ELSE b END)";
-	auto parsed_info = DefaultFunctionGenerator::CreateInternalMacroInfo(parsed);
-	loader.RegisterFunction(*parsed_info);
-
 	// D9: one wrapper per reader (a macro binds every function it names, so one combined
 	// wrapper would need every reader loaded). Each replaces the rows -dcs-content-as marked
 	// for its format with the reader's rows: a block mark takes the parsed blocks at its level;

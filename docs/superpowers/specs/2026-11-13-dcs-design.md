@@ -237,7 +237,7 @@ as numbers. Every other key in `attributes` is reachable through the map tier wi
 | | `:main` | `role=main`, else the single main `article` (reader mode, duckeye#28 defect 3) |
 | | `:chrome` | `role` in nav, header, footer or aside, plus link-only paragraphs: reader mode's prune target |
 | | `:caption`, `:footnote`, `:callout`, `:callout(warning)` | by type and class |
-| **Data** | `:data` | a `table`, or a `code` block in csv, tsv, json, jsonl or yaml: the embedded-data candidates (duck_block_utils#79) |
+| **Data** | `:data` | a `table`, or a `code` block in csv, tsv, json, jsonl or yaml: the embedded-data candidates (converted by duckdb_panduck#188, once it lands) |
 | | `:image-only`, `:link-only` | a paragraph holding only an image or a link |
 | **Links** | `:external`, `:internal` | links off or on the document's own host |
 | **Sections** | `section(sel)` | the scope: a heading matching `sel` and everything under it, as duck_blocks_sections draws it (duck_block_utils#82) |
@@ -278,7 +278,7 @@ The principle (#56): **use CSS's own word where one exists, `-dcs-` only where n
 | | `-dcs-dedupe: text` | drops repeats |
 | 3 structure | `display: contents` | unwraps (flattens) a container |
 | | `-dcs-wrap: callout(note) \| blockquote \| details` | wraps blocks |
-| | `-dcs-as: h3 \| paragraph \| table \| …` | retags. `code[language=csv] { -dcs-as: table }` parses embedded data through duck_block_utils#79 |
+| | `-dcs-as: h3 \| paragraph \| table \| …` | retags. `code[language=csv] { -dcs-as: table }` marks embedded data for duckdb_panduck#188's embedded-data hook (amended 2026-11-15: duck_block_utils#79 will not land); until then dmb marks the block and warns `not-yet` |
 | | `-dcs-level: +1` | demotes headings |
 | 4 content | `content` with `::before` and `::after` | strings, `attr()`, `text()`, `slug()`, `counter()` |
 | | `-dcs-content-as: text \| md \| markdown \| rst \| latex \| html \| org \| …` | parsed through panduck's readers |
