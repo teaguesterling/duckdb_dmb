@@ -7,7 +7,6 @@
 #include "utf8proc.hpp"
 
 #include <algorithm>
-#include <functional>
 #include <set>
 #include <sstream>
 #include <unordered_map>
@@ -261,6 +260,18 @@ string YamlQuote(const string &v) {
 		}
 	}
 	return out + "\"";
+}
+
+//! Rows with at least one inline child, found in one pass (a per-row subtree scan is quadratic
+//! on a deeply nested document).
+vector<bool> InlineParents(const BlockTree &tree) {
+	vector<bool> out(tree.nodes.size(), false);
+	for (auto &n : tree.nodes) {
+		if (n.kind == "inline" && n.parent >= 0) {
+			out[n.parent] = true;
+		}
+	}
+	return out;
 }
 
 struct Winner {
@@ -615,7 +626,14 @@ struct Engine {
 			                                 Value(before), Value(after)});
 			st.changed = true;
 		};
+		// Level changes cover whole subtrees. A difference array keeps that linear: `run` is the
+		// change in force at row i, `diff[k]` is what starts or ends at row k.
+		auto inline_parent = InlineParents(tree);
+		vector<int32_t> diff(n_rows + 1, 0);
+		int32_t run = 0;
 		for (idx_t i = 0; i < n_rows; i++) {
+			run += diff[i];
+			st.delta[i] = run;
 			if (drop[i] || !tree.Matchable(i)) {
 				continue;
 			}
@@ -624,21 +642,14 @@ struct Engine {
 			// display: contents
 			auto dw = display[i].find("display");
 			if (dw != display[i].end() && Trim(dw->second.decl->value_text) == "contents") {
-				bool inline_child = false;
-				for (idx_t j = i + 1; j < node.subtree_end; j++) {
-					if (tree.nodes[j].parent == static_cast<int64_t>(i) && tree.nodes[j].kind == "inline") {
-						inline_child = true;
-					}
-				}
-				if (inline_child) {
+				if (inline_parent[i]) {
 					Diag("error", "contents-has-inlines",
 					     "display: contents needs a container of blocks; this block holds inline text",
 					     dw->second.decl->pos);
 				} else {
 					st.unwrapped[i] = true;
-					for (idx_t j = i + 1; j < node.subtree_end; j++) {
-						st.delta[j]--;
-					}
+					diff[i + 1]--; // the descendants rise one level
+					diff[node.subtree_end]++;
 					record(i, dw->second, node.element_type, "unwrapped");
 					continue;
 				}
@@ -706,10 +717,10 @@ struct Engine {
 			if (ww != props.end()) {
 				string wt, wc;
 				if (ParseWrap(Trim(ww->second.decl->value_text), wt, wc)) {
-					st.before[i].push_back(Inserted {wt, wc, node.level + st.delta[i]});
-					for (idx_t j = i; j < node.subtree_end; j++) {
-						st.delta[j]++;
-					}
+					st.before[i].push_back(Inserted {wt, wc, node.level + run});
+					run++; // the block and its subtree move down one level
+					st.delta[i] = run;
+					diff[node.subtree_end]--;
 					record(i, ww->second, "", wt + (wc.empty() ? "" : "." + wc));
 				}
 			}
@@ -731,14 +742,8 @@ struct Engine {
 		ValueEvaluator eval(tree);
 		eval.SetCounters(&counters);
 		auto has_block_children = [&](idx_t i) { return !tree.nodes[i].children.empty(); };
-		auto has_inline_children = [&](idx_t i) {
-			for (idx_t j = i + 1; j < tree.nodes[i].subtree_end; j++) {
-				if (tree.nodes[j].parent == static_cast<int64_t>(i) && tree.nodes[j].kind == "inline") {
-					return true;
-				}
-			}
-			return false;
-		};
+		auto inline_parent = InlineParents(tree);
+		auto has_inline_children = [&](idx_t i) { return static_cast<bool>(inline_parent[i]); };
 		for (idx_t i = 0; i < n_rows; i++) {
 			if (drop[i] || st.unwrapped[i] || !tree.Matchable(i)) {
 				continue;
@@ -1205,44 +1210,51 @@ ApplyResult Apply(const Value &list, const BlockFields &fields, const LogicalTyp
 	}
 	close_until(n_rows);
 	auto &out = engine.result.blocks;
-	auto level_of = [&](idx_t k) {
-		auto &v = StructValue::GetChildren(out[k])[fields.level];
-		return v.IsNull() ? 1 : v.GetValue<int32_t>();
+	// A row's level; a NULL row has none, so it takes the previous row's (1 at the start) and stays
+	// beside it. Never calls GetChildren on a NULL Value.
+	auto levels_of = [&]() {
+		vector<int32_t> lv(out.size(), 1);
+		for (idx_t k = 0; k < out.size(); k++) {
+			if (out[k].IsNull()) {
+				lv[k] = k > 0 ? lv[k - 1] : 1;
+				continue;
+			}
+			auto &v = StructValue::GetChildren(out[k])[fields.level];
+			lv[k] = v.IsNull() ? (k > 0 ? lv[k - 1] : 1) : v.GetValue<int32_t>();
+		}
+		return lv;
 	};
 
-	// phase 5: stable-sort each set of siblings by key; a block moves with its subtree
+	// phase 5: stable-sort each set of siblings by key; a block moves with its subtree. One pass to
+	// find parents, one iterative walk: no recursion, and O(n log n) however deep the document is.
 	if (any_order) {
-		vector<idx_t> perm;
-		std::function<void(idx_t, idx_t)> sort_range = [&](idx_t lo, idx_t hi) {
-			if (lo >= hi) {
-				return;
+		auto lv = levels_of();
+		vector<vector<idx_t>> children(out.size());
+		vector<idx_t> roots, stack;
+		for (idx_t k = 0; k < out.size(); k++) {
+			while (!stack.empty() && lv[stack.back()] >= lv[k]) {
+				stack.pop_back();
 			}
-			int32_t sibling_level = level_of(lo);
-			for (idx_t k = lo; k < hi; k++) {
-				sibling_level = MinValue(sibling_level, level_of(k));
-			}
-			vector<std::pair<idx_t, idx_t>> segments; // [start, end) per sibling and its subtree
-			for (idx_t k = lo; k < hi;) {
-				idx_t end = k + 1;
-				while (end < hi && level_of(end) > sibling_level) {
-					end++;
-				}
-				segments.emplace_back(k, end);
-				k = end;
-			}
-			std::stable_sort(segments.begin(), segments.end(),
-			                 [&](const std::pair<idx_t, idx_t> &a, const std::pair<idx_t, idx_t> &b) {
-				                 return out_key[a.first] < out_key[b.first];
-			                 });
-			for (auto &seg : segments) {
-				perm.push_back(seg.first);
-				sort_range(seg.first + 1, seg.second);
-			}
-		};
-		sort_range(0, out.size());
+			(stack.empty() ? roots : children[stack.back()]).push_back(k);
+			stack.push_back(k);
+		}
+		auto by_key = [&](idx_t x, idx_t y) { return out_key[x] < out_key[y]; };
+		std::stable_sort(roots.begin(), roots.end(), by_key);
+		for (auto &c : children) {
+			std::stable_sort(c.begin(), c.end(), by_key);
+		}
+		vector<idx_t> perm, todo(roots.rbegin(), roots.rend());
+		perm.reserve(out.size());
+		while (!todo.empty()) {
+			auto k = todo.back();
+			todo.pop_back();
+			perm.push_back(k);
+			todo.insert(todo.end(), children[k].rbegin(), children[k].rend());
+		}
 		vector<Value> sorted;
+		sorted.reserve(out.size());
 		for (auto k : perm) {
-			sorted.push_back(out[k]);
+			sorted.push_back(std::move(out[k]));
 		}
 		out = std::move(sorted);
 	}
@@ -1296,8 +1308,9 @@ ApplyResult Apply(const Value &list, const BlockFields &fields, const LogicalTyp
 			for (auto &kv : frontmatter) {
 				text += kv.first + ": " + kv.second + "\n";
 			}
+			auto lv = levels_of();
 			idx_t at = 0;
-			while (at < out.size() && !out[at].IsNull() && level_of(at) == 0) {
+			while (at < out.size() && !out[at].IsNull() && lv[at] == 0) {
 				at++; // after a level-0 document root
 			}
 			vector<Value> fields_v;
