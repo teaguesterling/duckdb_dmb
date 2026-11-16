@@ -15,7 +15,7 @@ list_item:last-child
 paragraph:first-child
 paragraph:last-child
 list_item:nth-child(2)
-# excluded: list_item:nth-child(odd)  -- ast_select's an+b forms silently match nothing (2n+1 and odd give 0 rows; nth-child(1) and (3) work). Measured 2026-11-15, sitting_duck v1.18.3. dmb follows CSS: 5, 9, 11.
+# excluded: list_item:nth-child(odd)  -- ast_select's an+b forms silently match nothing (2n+1 and odd give 0 rows; nth-child(1) and (3) work). Measured 2026-11-15, sitting_duck v1.18.3. dmb follows CSS: 5, 9, 11. Filed as teaguesterling/sitting_duck#337 (reproduced on v1.18.4).
 paragraph:not(:first-child)
 list_item:not(:last-child)
 # excluded: :has(> list_item)  -- ast_select refuses combinators inside :has() by name.
@@ -26,5 +26,5 @@ list_item:has(list)
 # excluded: list_item:only-child  -- ast_select has no :only-child (refused by name).
 # excluded: list_item:has(> paragraph)  -- ast_select refuses combinators inside :has() by name.
 heading#intro + paragraph
-# excluded: paragraph:not(heading + paragraph)  -- ast_select silently ignores a compound argument to :not(): it returned all 6 paragraphs; CSS (and dmb) give 6, 13, 14. Measured 2026-11-15, sitting_duck v1.18.3.
+# excluded: paragraph:not(heading + paragraph)  -- ast_select silently ignores a compound argument to :not(): it returned all 6 paragraphs; CSS (and dmb) give 6, 13, 14. Measured 2026-11-15, sitting_duck v1.18.3. Filed as teaguesterling/sitting_duck#338 (reproduced on v1.18.4).
 :first-child
