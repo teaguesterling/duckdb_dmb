@@ -52,6 +52,14 @@ struct Sheet {
 	vector<Diagnostic> diagnostics;
 };
 
+//! Parentheses and brackets nest at most this deep in a sheet or selector; deeper is a syntax error.
+//! Every recursive pass (tree-sitter walks, the value lexer, the matcher) relies on the bound.
+constexpr int MAX_NESTING = 32;
+//! Selector compounds and combinators nest at most this deep.
+constexpr int MAX_SELECTOR_DEPTH = 256;
+bool NestingTooDeep(const string &text);
+string NestingMessage();
+
 //! Parse a .dcs sheet. Never throws on bad input: problems become diagnostics.
 Sheet ParseSheet(const string &text);
 

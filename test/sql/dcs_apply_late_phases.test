@@ -127,8 +127,9 @@ SELECT dcs_apply(doc, 'p { -dcs-colour: red; }', true) FROM fx;
 ----
 unknown-property
 
-# Security review: order on a document with a NULL row raised an INTERNAL error; the NULL row now
-# stays where it was. A NULL row has no level, so it sorts as a top-level sibling with key 0.
+# Security review: order on a document with a NULL row raised an INTERNAL error. Now the NULL row
+# is kept. It has no level, so it sorts as a top-level sibling with key 0: the stable sort puts it
+# before `a` (key 1), so it moves from index 1 to index 0.
 query I
 SELECT list_transform(dcs_apply([b('block', 'paragraph', 'a', 1, MAP {}, 0), NULL,
     b('block', 'paragraph', 'b', 1, MAP {}, 2)], 'p:contains("a") { order: 1; }'), lambda x: coalesce(x.content, 'NULL'));

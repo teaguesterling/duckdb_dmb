@@ -148,8 +148,7 @@ SELECT e.* FROM (SELECT unnest(dcs_explain(doc, 'heading { -dcs-id: auto; }
 | any other property, such as `color` | presentation: written to `attributes['style']` for a renderer |
 
 Values are strings and the functions `text()`, `attr(name)`, `slug(value)`, `counter(name)` and
-`url()`. The
-cascade is CSS's: `!important`, then specificity, then source order. Phase 1 (`-dcs-id`,
+`url()`. The cascade is CSS's: `!important`, then specificity, then source order. Phase 1 (`-dcs-id`,
 `-dcs-class`) matches the input. Every other property matches the document after phase 1, so it
 sees the new ids and classes. After a prune, `element_order` is numbered again from 0.
 
@@ -159,13 +158,18 @@ dmb reports each of these as a `not-yet` diagnostic. It never skips one silently
 
 - `:external` and `:internal`. A rule that uses one is skipped.
 - `text-overflow` and `-dcs-link`.
-- `@import`, and at-rules other than `@frontmatter` and `@media`.
+- `@import`. Other at-rules, such as `@font-face`, are not part of DCS: they give
+  `unsupported-at-rule`.
 - `@media (format: X)`: dmb parses it, but `dcs_apply` has no output format, so these rules never
   apply.
 - `-dcs-as: table` marks a data code block with `attributes['dcs-as'] = 'table'`, but nothing
   converts it to a table yet. The conversion waits for duckdb_panduck#188.
 - `-dcs-content-as` formats other than markdown and html: no per-row reader exists, so the
-  content stays a `raw` block with `attributes['format']`.
+  content stays a `raw` block with `attributes['format']` (diagnostic `no-reader`).
+
+Parentheses and brackets may nest 32 levels deep in a sheet or a selector, and a selector may
+chain 256 compounds. Deeper is a `syntax` error: the limit keeps a hostile sheet from crashing
+the process.
 
 ## Errors
 

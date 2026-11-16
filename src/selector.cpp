@@ -243,12 +243,20 @@ static bool CompilePseudoClass(TsCtx &ctx, TSNode node, TSNode name_node, TSNode
 				}
 				simple.args.push_back(std::move(arg));
 			}
-			return !simple.args.empty();
+			if (simple.args.empty()) {
+				ctx.Diag("error", "missing-argument", ":" + name + "() needs a selector", node);
+				return false;
+			}
+			return true;
 		}
 		// tree-sitter parsed the argument as a value: re-parse its text as a selector (plan D2)
 		ComplexSelector arg;
 		string pe;
-		if (!CompileSelectorText(InnerArgs(ctx, *args), arg, pe, ctx.diagnostics, ctx.Pos(*args)) || !pe.empty()) {
+		if (!CompileSelectorText(InnerArgs(ctx, *args), arg, pe, ctx.diagnostics, ctx.Pos(*args))) {
+			return false;
+		}
+		if (!pe.empty()) {
+			ctx.Diag("error", "pseudo-element-in-argument", ":" + name + "() can't take a pseudo-element", node);
 			return false;
 		}
 		simple.args.push_back(std::move(arg));
@@ -261,7 +269,11 @@ static bool CompilePseudoClass(TsCtx &ctx, TSNode node, TSNode name_node, TSNode
 		}
 		ComplexSelector arg;
 		string pe;
-		if (!CompileSelectorText(InnerArgs(ctx, *args), arg, pe, ctx.diagnostics, ctx.Pos(*args)) || !pe.empty()) {
+		if (!CompileSelectorText(InnerArgs(ctx, *args), arg, pe, ctx.diagnostics, ctx.Pos(*args))) {
+			return false;
+		}
+		if (!pe.empty()) {
+			ctx.Diag("error", "pseudo-element-in-argument", ":section() can't take a pseudo-element", node);
 			return false;
 		}
 		simple.args.push_back(std::move(arg));
@@ -291,7 +303,17 @@ static bool CompilePseudoClass(TsCtx &ctx, TSNode node, TSNode name_node, TSNode
 	}
 	if (WordArgPseudo().count(name) && has_args) {
 		simple.text_arg = Lower(Unquote(InnerArgs(ctx, *args)));
+		auto &t = simple.text_arg;
+		if (name == "h" && !(t.size() == 1 && t[0] >= '1' && t[0] <= '6')) {
+			ctx.Diag("error", "bad-argument", ":h() takes a heading rank, 1 to 6, not " + t, node);
+			return false;
+		}
 		return true;
+	}
+	if (name == "external" || name == "internal") {
+		// they need the document's host, which dmb doesn't know: refused when compiled, not when matched
+		ctx.Diag("warning", "not-yet", "not-yet: dmb does not match :" + name + " yet", node);
+		return false;
 	}
 	if (NoArgPseudo().count(name) && !has_args) {
 		return true;
@@ -405,7 +427,32 @@ static bool CompileSuffix(TsCtx &ctx, TSNode n, const string &type, ComplexSelec
 	return true;
 }
 
+//! Bounds CompileInto's recursion: a long descendant chain nests one level per compound.
+struct DepthGuard {
+	static int &Depth() {
+		static thread_local int depth = 0;
+		return depth;
+	}
+	DepthGuard() {
+		Depth()++;
+	}
+	~DepthGuard() {
+		Depth()--;
+	}
+	bool TooDeep() const {
+		return Depth() > MAX_SELECTOR_DEPTH;
+	}
+};
+
 static bool CompileInto(TsCtx &ctx, TSNode n, ComplexSelector &out, string &pe) {
+	DepthGuard guard;
+	if (guard.TooDeep()) {
+		if (guard.Depth() == MAX_SELECTOR_DEPTH + 1) {
+			ctx.Diag("error", "syntax", "selector nested deeper than " + std::to_string(MAX_SELECTOR_DEPTH) + " levels",
+			         n);
+		}
+		return false;
+	}
 	auto type = NodeType(n);
 	if (type == "tag_name") {
 		Compound c;
@@ -497,6 +544,10 @@ bool CompileSelectorNode(TsCtx &ctx, TSNode node, ComplexSelector &out, string &
 
 bool CompileSelectorText(const string &text, ComplexSelector &out, string &pseudo_element,
                          vector<Diagnostic> &diagnostics, SourcePos pos) {
+	if (NestingTooDeep(text)) {
+		diagnostics.push_back(Diagnostic {"error", "syntax", NestingMessage(), pos});
+		return false;
+	}
 	string src = text + " {}";
 	TsTree tree(src);
 	TsCtx ctx {src, 0, nullptr, pos, diagnostics};

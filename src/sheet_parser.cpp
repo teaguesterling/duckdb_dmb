@@ -381,7 +381,7 @@ struct Builder {
 					Media(ctx, c);
 				}
 			} else if (t == "import_statement") {
-				ctx.Diag("warning", "import-unsupported", "@import is not supported yet", c);
+				ctx.Diag("warning", "not-yet", "@import is not supported yet", c);
 			} else if (t == "at_rule") {
 				AtRule(ctx, c, media);
 			} else if (t == "comment" || t == "js_comment") {
@@ -397,7 +397,11 @@ struct Builder {
 	}
 
 	static string Trim40(const string &s) {
-		auto t = s.substr(0, 40);
+		idx_t cut = MinValue<idx_t>(40, s.size());
+		while (cut < s.size() && cut > 0 && (static_cast<unsigned char>(s[cut]) & 0xC0) == 0x80) {
+			cut--; // never split a UTF-8 sequence
+		}
+		auto t = s.substr(0, cut);
 		auto nl = t.find('\n');
 		return nl == string::npos ? t : t.substr(0, nl);
 	}
@@ -406,6 +410,10 @@ struct Builder {
 		for (auto &chunk : SplitTopLevel(text)) {
 			string src = text.substr(chunk.first, chunk.second - chunk.first);
 			if (Blank(src)) {
+				continue;
+			}
+			if (NestingTooDeep(src)) {
+				sheet.diagnostics.push_back(Diagnostic {"error", "syntax", NestingMessage(), lines.Pos(chunk.first)});
 				continue;
 			}
 			TsTree tree(src);
@@ -426,6 +434,34 @@ struct Builder {
 };
 
 } // namespace
+
+bool NestingTooDeep(const string &text) {
+	int depth = 0;
+	char quote = 0;
+	for (idx_t i = 0; i < text.size(); i++) {
+		char c = text[i];
+		if (quote) {
+			if (c == '\\') {
+				i++;
+			} else if (c == quote) {
+				quote = 0;
+			}
+		} else if (c == '"' || c == '\'') {
+			quote = c;
+		} else if (c == '(' || c == '[') {
+			if (++depth > MAX_NESTING) {
+				return true;
+			}
+		} else if ((c == ')' || c == ']') && depth > 0) {
+			depth--;
+		}
+	}
+	return false;
+}
+
+string NestingMessage() {
+	return "parentheses or brackets nested deeper than " + std::to_string(MAX_NESTING) + " levels";
+}
 
 Sheet ParseSheet(const string &text) {
 	Builder b(text);

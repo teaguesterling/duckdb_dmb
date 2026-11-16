@@ -7,6 +7,7 @@
 #include "utf8proc.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <set>
 #include <sstream>
 #include <unordered_map>
@@ -125,6 +126,57 @@ bool IsPhase4Element(const string &p) {
 //! Properties a ::before or ::after rule may set.
 bool IsPseudoProperty(const string &p) {
 	return p == "content" || p == "-dcs-content-as" || p == "-dcs-content-place";
+}
+
+//! The source text of each top-level text(...) argument in a value, in order, with its quotes.
+//! The tokenizer keeps only token text, which loses a selector's own arguments and quotes.
+vector<string> TextArgSources(const string &v) {
+	vector<string> out;
+	char quote = 0;
+	int depth = 0;
+	for (idx_t i = 0; i < v.size(); i++) {
+		char c = v[i];
+		if (quote) {
+			if (c == '\\') {
+				i++;
+			} else if (c == quote) {
+				quote = 0;
+			}
+			continue;
+		}
+		bool word_before =
+		    i > 0 && (std::isalnum(static_cast<unsigned char>(v[i - 1])) || v[i - 1] == '-' || v[i - 1] == '_');
+		if (depth == 0 && !word_before && v.compare(i, 5, "text(") == 0) {
+			idx_t j = i + 5;
+			int inner = 1;
+			char q = 0;
+			for (; j < v.size() && inner > 0; j++) {
+				char d = v[j];
+				if (q) {
+					if (d == '\\') {
+						j++;
+					} else if (d == q) {
+						q = 0;
+					}
+				} else if (d == '"' || d == '\'') {
+					q = d;
+				} else if (d == '(') {
+					inner++;
+				} else if (d == ')') {
+					inner--;
+				}
+			}
+			out.push_back(v.substr(i + 5, j - 1 - (i + 5)));
+			i = j - 1;
+		} else if (c == '"' || c == '\'') {
+			quote = c;
+		} else if (c == '(') {
+			depth++;
+		} else if (c == ')' && depth > 0) {
+			depth--;
+		}
+	}
+	return out;
 }
 
 bool IsInteger(const string &s) {
@@ -432,7 +484,7 @@ struct Engine {
 						     p + " is reserved: set " + p.substr(2) + " through its own property", d.pos);
 					}
 				} else if (IsPhase1(p)) {
-					continue;
+					// checked by CheckValue; the pseudo-element check below still applies
 				} else if (IsPhase2(p) || IsPhase3(p)) {
 					auto v = Trim(d.value_text);
 					bool relative;
@@ -453,6 +505,15 @@ struct Engine {
 					}
 				} else if (IsPhase4Element(p) || IsPseudoProperty(p)) {
 					auto v = Trim(d.value_text);
+					vector<Token> rp;
+					string rp_error;
+					if (p == "-dcs-replace" && TokenizeValue(d.value_text, rp, rp_error) && rp.size() == 2 &&
+					    rp[0].kind == Token::STRING) {
+						duckdb_re2::RE2 re(rp[0].text, duckdb_re2::RE2::Quiet);
+						if (!re.ok()) {
+							Diag("error", "bad-regex", "-dcs-replace: " + re.error(), d.pos);
+						}
+					}
 					if (p == "-dcs-content-place" && v != "inline" && v != "block") {
 						Diag("error", "bad-value", "-dcs-content-place takes inline or block, not " + v, d.pos);
 					} else if (p == "text-transform" && v != "uppercase" && v != "lowercase" && v != "capitalize" &&
@@ -509,6 +570,7 @@ struct Engine {
 		auto cascade = Cascade(tree, IsPhase1);
 		ValueEvaluator eval(tree);
 		std::set<string> ids;
+		std::unordered_map<string, int> next_suffix; // per base: the last -n tried, so k repeats cost O(k)
 		for (auto &a : attrs) {
 			auto it = a.find("id");
 			if (it != a.end()) {
@@ -526,8 +588,9 @@ struct Engine {
 						auto base = Slug(tree.Text(i));
 						if (!base.empty()) {
 							auto id = base;
-							for (int n = 1; ids.count(id); n++) {
-								id = base + "-" + std::to_string(n);
+							int &n = next_suffix[base];
+							while (ids.count(id)) {
+								id = base + "-" + std::to_string(++n);
 							}
 							ids.insert(id);
 							a["id"] = id;
@@ -546,8 +609,9 @@ struct Engine {
 								ids.erase(own->second);
 							}
 							auto id = v;
-							for (int n = 1; ids.count(id) && !(own != a.end() && own->second == id); n++) {
-								id = v + "-" + std::to_string(n);
+							int &n = next_suffix[v];
+							while (ids.count(id) && !(own != a.end() && own->second == id)) {
+								id = v + "-" + std::to_string(++n);
 							}
 							a["id"] = id;
 							ids.insert(id);
@@ -1026,21 +1090,21 @@ struct Engine {
 				continue;
 			}
 			bool ok = true, prev_word = false;
+			auto text_args = TextArgSources(d.value_text);
+			idx_t text_k = 0;
 			for (auto &tok : tokens) {
 				string piece;
 				bool word = tok.kind == Token::IDENT || tok.kind == Token::NUMBER;
 				if (tok.kind == Token::FUNCTION && tok.text == "text") {
-					string sel_text;
-					for (auto &arg : tok.args) {
-						for (auto &t : arg) {
-							sel_text += (sel_text.empty() ? "" : " ") + t.text;
-						}
-					}
+					string sel_text = text_k < text_args.size() ? Trim(text_args[text_k++]) : string();
 					ComplexSelector sel;
 					string pe;
 					vector<Diagnostic> diags;
 					if (sel_text.empty() || !CompileSelectorText(sel_text, sel, pe, diags, d.pos) || !pe.empty()) {
-						Diag("error", "bad-value", d.property + ": text() in @frontmatter needs a selector", d.pos);
+						Diag("error", "bad-value",
+						     d.property + ": text() in @frontmatter needs one selector" +
+						         (diags.empty() ? string() : " (" + diags[0].message + ")"),
+						     d.pos);
 						ok = false;
 						break;
 					}
@@ -1176,7 +1240,7 @@ ApplyResult Apply(const Value &list, const BlockFields &fields, const LogicalTyp
 			auto &pattern = ct.replace_re[rp_from[owner]];
 			auto it = regexes.find(pattern);
 			if (it == regexes.end()) {
-				it = regexes.emplace(pattern, std::unique_ptr<duckdb_re2::RE2>(new duckdb_re2::RE2(pattern))).first;
+				it = regexes.emplace(pattern, std::unique_ptr<duckdb_re2::RE2>(new duckdb_re2::RE2(pattern, duckdb_re2::RE2::Quiet))).first;
 			}
 			if (it->second->ok()) {
 				duckdb_re2::RE2::GlobalReplace(&text, *it->second, ct.replace_with[rp_from[owner]]);
