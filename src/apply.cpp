@@ -317,6 +317,8 @@ struct Engine {
 		result.diagnostics = s.diagnostics;
 	}
 
+	std::set<int32_t> value_reported; // declarations whose value error is already a diagnostic
+
 	void Diag(const string &severity, const string &code, const string &message, SourcePos pos) {
 		result.diagnostics.push_back(Diagnostic {severity, code, message, pos});
 	}
@@ -366,6 +368,50 @@ struct Engine {
 	}
 
 	//! Sheet-level checks that do not depend on matching: each declaration once.
+	//! A function name the value evaluator doesn't know, searched through every argument; "" if none.
+	static string UnknownFunction(const vector<Token> &tokens) {
+		static const std::set<string> known {"text", "attr", "slug", "counter", "url"};
+		for (auto &tok : tokens) {
+			if (tok.kind != Token::FUNCTION) {
+				continue;
+			}
+			if (!known.count(tok.text)) {
+				return tok.text;
+			}
+			for (auto &arg : tok.args) {
+				auto inner = UnknownFunction(arg);
+				if (!inner.empty()) {
+					return inner;
+				}
+			}
+		}
+		return "";
+	}
+
+	//! The value checks no document can change: a value that doesn't tokenize, or an unknown
+	//! function. Before these ran here, they were found only when a rule matched a block (M4).
+	void CheckValue(const Declaration &d) {
+		auto &p = d.property;
+		auto v = Trim(d.value_text);
+		bool evaluated = (p == "-dcs-id" && v != "auto") || (IsCustom(p) && v != "unset") ||
+		                 (p == "content" && v != "none" && v != "normal");
+		if (!evaluated) {
+			return;
+		}
+		vector<Token> tokens;
+		string error;
+		if (!TokenizeValue(d.value_text, tokens, error)) {
+			Diag("error", "bad-value", p + ": " + error, d.pos);
+			value_reported.insert(d.order);
+			return;
+		}
+		auto unknown = UnknownFunction(tokens);
+		if (!unknown.empty()) {
+			Diag("error", "unknown-function", p + ": unknown-function: " + unknown + "()", d.pos);
+			value_reported.insert(d.order);
+		}
+	}
+
 	void CheckDeclarations() {
 		std::set<int32_t> seen;
 		for (auto &rule : sheet.rules) {
@@ -377,6 +423,7 @@ struct Engine {
 				if (!seen.insert(d.order).second) {
 					continue;
 				}
+				CheckValue(d);
 				auto &p = d.property;
 				if (IsCustom(p)) {
 					if (ReservedAttributes().count(p.substr(2))) {
@@ -441,7 +488,9 @@ struct Engine {
 		string error;
 		if (!TokenizeValue(d.value_text, tokens, error) || !eval.Eval(tokens, node, out, is_null, error)) {
 			auto code = error.compare(0, 16, "unknown-function") == 0 ? "unknown-function" : "bad-value";
-			Diag("error", code, d.property + ": " + error, d.pos);
+			if (value_reported.insert(d.order).second) { // once per declaration, not once per block
+				Diag("error", code, d.property + ": " + error, d.pos);
+			}
 			return false;
 		}
 		return true;
@@ -452,7 +501,7 @@ struct Engine {
 		                                       : before.ToString() == after.ToString()) {
 			return; // unchanged (Value == refuses NULL on v2.0)
 		}
-		result.changes.push_back(Change {tree.nodes[i].element_order, w.rule->index, w.decl->property, before, after});
+		result.changes.push_back(Change {tree.nodes[i].element_order, w.rule->index, w.decl->property, before, after, w.decl->pos});
 	}
 
 	void Phase1(const BlockTree &tree, vector<std::map<string, string>> &attrs) {
@@ -575,7 +624,7 @@ struct Engine {
 				drop[j] = true;
 			}
 			result.changes.push_back(Change {tree.nodes[i].element_order, w.rule->index, w.decl->property,
-			                                 Value("present"), Value(LogicalType::VARCHAR)});
+			                                 Value("present"), Value(LogicalType::VARCHAR), w.decl->pos});
 		};
 		std::set<string> seen_texts;
 		for (idx_t i = 0; i < tree.nodes.size(); i++) {
@@ -623,7 +672,7 @@ struct Engine {
 		auto display = Cascade(tree, [](const string &p) { return p == "display"; });
 		auto record = [&](idx_t i, const Winner &w, const string &before, const string &after) {
 			result.changes.push_back(Change {tree.nodes[i].element_order, w.rule->index, w.decl->property,
-			                                 Value(before), Value(after)});
+			                                 Value(before), Value(after), w.decl->pos});
 			st.changed = true;
 		};
 		// Level changes cover whole subtrees. A difference array keeps that linear: `run` is the
@@ -800,7 +849,7 @@ struct Engine {
 						ct.new_content[i] = is_null ? string() : out;
 						current = ct.new_content[i];
 						result.changes.push_back(Change {node.element_order, cw->second.rule->index, "content",
-						                                 Value(tree.Text(i)), Value(current)});
+						                                 Value(tree.Text(i)), Value(current), cw->second.decl->pos});
 						ct.changed = true;
 					}
 				}
@@ -876,7 +925,7 @@ struct Engine {
 				}
 				result.changes.push_back(Change {node.element_order, content->second.rule->index,
 				                                 side == 0 ? "::before" : "::after", Value(LogicalType::VARCHAR),
-				                                 Value(text)});
+				                                 Value(text), decl.pos});
 				ct.changed = true;
 			}
 		}
@@ -922,7 +971,7 @@ struct Engine {
 				keys[i] = std::strtoll(v.c_str(), nullptr, 10);
 				if (keys[i] != 0) {
 					result.changes.push_back(Change {tree.nodes[i].element_order, it->second.rule->index, "order",
-					                                 Value("0"), Value(v)});
+					                                 Value("0"), Value(v), it->second.decl->pos});
 				}
 			}
 		}
@@ -952,7 +1001,7 @@ struct Engine {
 			auto it = a.find("style");
 			a["style"] = it == a.end() || Trim(it->second).empty() ? style : Trim(it->second) + "; " + style;
 			result.changes.push_back(Change {tree.nodes[i].element_order, winners.back()->rule->index, "style", before,
-			                                 Value(a["style"])});
+			                                 Value(a["style"]), winners.back()->decl->pos});
 		}
 	}
 
@@ -1032,7 +1081,7 @@ struct Engine {
 				lines.emplace_back(d.property, YamlQuote(value));
 			}
 			result.changes.push_back(Change {0, -1, "@frontmatter " + d.property, Value(LogicalType::VARCHAR),
-			                                 Value(value)});
+			                                 Value(value), d.pos});
 		}
 		return lines;
 	}
@@ -1050,6 +1099,12 @@ struct Engine {
 
 static bool fields_content_null(const Value &item, const BlockFields &fields) {
 	return StructValue::GetChildren(item)[fields.content].IsNull();
+}
+
+vector<Diagnostic> CheckSheet(const Sheet &sheet) {
+	Engine engine(sheet);
+	engine.CheckDeclarations();
+	return std::move(engine.result.diagnostics);
 }
 
 ApplyResult Apply(const Value &list, const BlockFields &fields, const LogicalType &block_type, const Sheet &sheet) {

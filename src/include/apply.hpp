@@ -13,6 +13,7 @@ struct Change {
 	string property;
 	Value before; // VARCHAR or NULL
 	Value after;  // VARCHAR or NULL
+	SourcePos pos; // the winning declaration's position
 };
 
 struct ApplyResult {
@@ -23,6 +24,10 @@ struct ApplyResult {
 
 //! Apply a sheet to one document (`list`, a duck_block[] Value of type LIST(block_type)).
 //! Never throws on sheet problems: they become diagnostics.
+//! The diagnostics a sheet has without any document: the parse, and every declaration check that
+//! needs no block (values, functions, properties). dcs_check returns these.
+vector<Diagnostic> CheckSheet(const Sheet &sheet);
+
 ApplyResult Apply(const Value &list, const BlockFields &fields, const LogicalType &block_type, const Sheet &sheet);
 
 } // namespace dmb

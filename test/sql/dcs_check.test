@@ -1,0 +1,75 @@
+# name: test/sql/dcs_check.test
+# description: dcs_check(sheet) lists a sheet's diagnostics as rows, with no document needed
+# group: [sql]
+
+require dmb
+
+# A clean sheet has nothing to report.
+query I
+SELECT count(*) FROM dcs_check('heading { -dcs-id: auto; } .comment { --audience: "kids"; }');
+----
+0
+
+# A NULL sheet is not an error: no rows.
+query I
+SELECT count(*) FROM dcs_check(NULL);
+----
+0
+
+# The Task 3 error sheet: the broken rule is a syntax error at its own position (measured
+# through strict dcs_apply, 2026-11-15). The good rule before it reports nothing.
+query IIII
+SELECT severity, code, line, "column" FROM dcs_check('p { a: b; }
+[x >= 2] { a: b; }');
+----
+error	syntax	2	1
+
+# An unknown pseudo-class is named in the message.
+query IIII
+SELECT code, message LIKE '%:bogus%', line, "column" FROM dcs_check(':bogus { --x: "1"; }');
+----
+unknown-pseudo-class	true	1	1
+
+# A bad value is a sheet fact, so dcs_check reports it without a document.
+query III
+SELECT code, line, "column" FROM dcs_check('p { -dcs-prune: sideways; }');
+----
+bad-value	1	5
+
+# An unknown function is a sheet fact too. Before dcs_check it was reported only when a rule
+# matched a block (deferred minor M4), so strict mode depended on the document.
+query IIII
+SELECT code, message LIKE '%frob()%', line, "column" FROM dcs_check('p { --x: frob(1); }');
+----
+unknown-function	true	1	5
+
+# A value that doesn't tokenize is reported the same way. (An unterminated string never gets
+# here: it breaks the CSS parse, a syntax error at the rule. Measured 2026-11-15.)
+query II
+SELECT code, "column" FROM dcs_check('p { -dcs-id: slug(text())); }');
+----
+bad-value	5
+
+# Warnings are rows too, with their severity.
+query II
+SELECT severity, code FROM dcs_check('p { -dcs-foo: 1; } p { display: grid; }') ORDER BY "column";
+----
+error	unknown-property
+warning	not-yet
+
+# Columns count characters, not bytes (plan D5): "é" is one column.
+query II
+SELECT line, "column" FROM dcs_check('/* é */ p { -dcs-prune: x; }');
+----
+1	13
+
+# Strict dcs_apply now raises an unknown function on a document no rule matches (M4).
+statement ok
+CREATE TYPE duck_block AS STRUCT(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER,
+    encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
+
+statement error
+SELECT dcs_apply([]::duck_block[], 'p { --x: frob(1); }', true);
+----
+unknown-function at line 1, column 5
+

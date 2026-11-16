@@ -1,0 +1,98 @@
+# name: test/sql/dcs_explain.test
+# description: dcs_explain(blocks, sheet) names the rule and declaration behind each change (plan D11)
+# group: [sql]
+
+require dmb
+
+statement ok
+CREATE TYPE duck_block AS STRUCT(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER,
+    encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
+
+statement ok
+CREATE MACRO b(k, t, c, lvl, attrs, o) AS
+    {'kind': k, 'element_type': t, 'content': c, 'level': lvl, 'encoding': 'text',
+     'attributes': attrs::MAP(VARCHAR, VARCHAR), 'element_order': o}::duck_block;
+
+# The fixture from dcs_match.test.
+statement ok
+CREATE TABLE fx AS SELECT [
+  b('block', 'heading', 'Intro', 1, MAP {'heading_level': '1', 'id': 'intro'}, 0),
+  b('block', 'paragraph', '', 1, MAP {}, 1),
+  b('inline', 'text', 'Hello world', 2, MAP {}, 2),
+  b('block', 'heading', 'Comments', 1, MAP {'heading_level': '2'}, 3),
+  b('block', 'paragraph', '', 1, MAP {'class': 'note wide'}, 4),
+  b('inline', 'text', 'First', 2, MAP {}, 5),
+  b('block', 'list', '', 1, MAP {'list_type': 'bullet'}, 6),
+  b('block', 'list_item', '', 2, MAP {}, 7),
+  b('inline', 'text', 'a', 3, MAP {}, 8),
+  b('block', 'list_item', '', 2, MAP {}, 9),
+  b('inline', 'text', 'b', 3, MAP {}, 10),
+  b('block', 'heading', 'End', 1, MAP {'heading_level': '2'}, 11),
+  b('block', 'paragraph', '', 1, MAP {}, 12),
+  b('inline', 'text', 'Bye', 2, MAP {}, 13)
+] AS doc;
+
+statement ok
+CREATE MACRO explained(sheet) AS TABLE
+    SELECT unnest(dcs_explain(doc, sheet), recursive := true) FROM fx;
+
+# The return type is D11's struct list.
+query I
+SELECT typeof(dcs_explain(doc, 'p { --x: "a"; }')) FROM fx;
+----
+STRUCT(element_order INTEGER, "rule" INTEGER, selector VARCHAR, property VARCHAR, "before" VARCHAR, "after" VARCHAR, line INTEGER, "column" INTEGER)[]
+
+# The cascade: one change per (block, property), naming the winning rule. .note (0,1,0) beats
+# p (0,0,1) on block 4. The line and column are the winning declaration's.
+query IIIIIIII
+SELECT * FROM explained('p { --x: "a"; } .note { --x: "b"; }') ORDER BY element_order;
+----
+1	0	p	--x	NULL	a	1	5
+4	1	.note	--x	NULL	b	1	25
+12	0	p	--x	NULL	a	1	5
+
+# A block a rule leaves as it was gets no row: block 0 already has its id.
+query II
+SELECT element_order, "after" FROM explained('heading { -dcs-id: auto; }') ORDER BY element_order;
+----
+3	comments
+11	end
+
+# A pruned section gives one row for its heading, with after = NULL.
+query IIII
+SELECT element_order, property, "before", "after" FROM explained('h2:contains("Comments") { -dcs-prune: section; }');
+----
+3	-dcs-prune	present	NULL
+
+# The declaration's line, not the rule's: a multi-line rule.
+query II
+SELECT line, "column" FROM explained('p {
+  color: red;
+  --x: "a";
+}') WHERE property = '--x' LIMIT 1;
+----
+3	3
+
+# @frontmatter belongs to no rule: rule is NULL and the selector is @frontmatter.
+query IIII
+SELECT "rule", selector, "after", line FROM explained('@frontmatter { title: "Ducks"; }');
+----
+NULL	@frontmatter	Ducks	1
+
+# An empty sheet explains nothing; NULL inputs give NULL.
+query I
+SELECT dcs_explain(doc, '') FROM fx;
+----
+[]
+
+query II
+SELECT dcs_explain(doc, NULL) IS NULL, dcs_explain(NULL, 'p {}') IS NULL FROM fx;
+----
+true	true
+
+# dcs_explain works per document, like dcs_apply: two rows, two lists.
+query I
+SELECT len(dcs_explain(d, 'heading { -dcs-id: auto; }')) FROM (SELECT doc AS d FROM fx UNION ALL SELECT doc[1:1] FROM fx) ORDER BY 1;
+----
+0
+2

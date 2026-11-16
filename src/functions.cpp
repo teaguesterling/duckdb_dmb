@@ -222,9 +222,110 @@ void ApplyFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// dcs_check(sheet): the diagnostics a sheet has with no document
+// ---------------------------------------------------------------------------
+
+unique_ptr<FunctionData> CheckBind(ClientContext &, TableFunctionBindInput &input, vector<LogicalType> &types,
+                                   vector<Identifier> &names) {
+	names = {"severity", "code", "message", "line", "column"};
+	types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::INTEGER,
+	         LogicalType::INTEGER};
+	auto result = make_uniq<RulesBindData>();
+	auto &arg = input.inputs[0];
+	if (arg.IsNull()) {
+		return std::move(result);
+	}
+	for (auto &d : CheckSheet(ParseSheet(arg.GetValue<string>()))) {
+		result->rows.push_back({Value(d.severity), Value(d.code), Value(d.message), Value::INTEGER(d.pos.line),
+		                        Value::INTEGER(d.pos.column)});
+	}
+	return std::move(result);
+}
+
+// ---------------------------------------------------------------------------
+// dcs_explain(blocks, sheet): one struct per change, naming the rule and declaration (D11)
+// ---------------------------------------------------------------------------
+
+LogicalType ExplainType() {
+	child_list_t<LogicalType> fields {
+	    {"element_order", LogicalType::INTEGER}, {"rule", LogicalType::INTEGER}, {"selector", LogicalType::VARCHAR},
+	    {"property", LogicalType::VARCHAR},      {"before", LogicalType::VARCHAR}, {"after", LogicalType::VARCHAR},
+	    {"line", LogicalType::INTEGER},          {"column", LogicalType::INTEGER}};
+	return LogicalType::LIST(LogicalType::STRUCT(std::move(fields)));
+}
+
+void ExplainResolveTypes(ResolveScalarFunctionTypesInput &input) {
+	auto &type = input.GetArgumentType(0);
+	if (type.id() == LogicalTypeId::SQLNULL || type.id() == LogicalTypeId::UNKNOWN) {
+		return;
+	}
+	ResolveBlockFields(type, "dcs_explain");
+	input.GetBoundFunction().GetArguments()[0] = type;
+}
+
+unique_ptr<FunctionData> ExplainBind(BindScalarFunctionInput &input) {
+	auto &type = input.GetBoundFunction().GetArguments()[0];
+	if (type.id() != LogicalTypeId::LIST) {
+		return make_uniq<ApplyBindData>(BlockFields {}, LogicalType::SQLNULL);
+	}
+	return make_uniq<ApplyBindData>(ResolveBlockFields(type, "dcs_explain"), ListType::GetChildType(type));
+}
+
+void ExplainFun(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto &func = state.expr.Cast<BoundFunctionExpression>();
+	auto &bind = func.BindInfo()->Cast<ApplyBindData>();
+	auto &entry_type = ListType::GetChildType(result.GetType());
+	string cached_text;
+	Sheet cached;
+	bool have_cache = false;
+	for (idx_t row = 0; row < args.size(); row++) {
+		auto blocks = args.data[0].GetValue(row);
+		auto sheet_text = args.data[1].GetValue(row);
+		if (blocks.IsNull() || sheet_text.IsNull()) {
+			result.SetValue(row, Value(result.GetType()));
+			continue;
+		}
+		auto text = sheet_text.ToString();
+		if (!have_cache || text != cached_text) {
+			cached = ParseSheet(text);
+			cached_text = text;
+			have_cache = true;
+		}
+		auto applied = Apply(blocks, bind.fields, bind.block_type, cached);
+		vector<Value> entries;
+		for (auto &c : applied.changes) {
+			Value rule(LogicalType::INTEGER), selector("@frontmatter");
+			if (c.rule >= 0) {
+				rule = Value::INTEGER(c.rule);
+				selector = Value(LogicalType::VARCHAR);
+				for (auto &r : cached.rules) {
+					if (r.index == c.rule) {
+						selector = Value(r.selector_text);
+						break;
+					}
+				}
+			}
+			entries.push_back(Value::STRUCT(entry_type, {Value::INTEGER(c.element_order), rule, selector,
+			                                             Value(c.property), c.before, c.after,
+			                                             Value::INTEGER(c.pos.line), Value::INTEGER(c.pos.column)}));
+		}
+		result.SetValue(row, Value::LIST(entry_type, std::move(entries)));
+	}
+}
+
 } // namespace
 
 void RegisterFunctions(ExtensionLoader &loader) {
+	TableFunction check("dcs_check", {LogicalType::VARCHAR}, RulesScan, CheckBind, RulesInit);
+	loader.RegisterFunction(check);
+
+	ScalarFunction explain("dcs_explain", {LogicalType::ANY, LogicalType::VARCHAR}, ExplainType(), ExplainFun);
+	explain.SetResolveTypesCallback(ExplainResolveTypes);
+	explain.SetBindCallback(ExplainBind);
+	explain.SetFallible();
+	loader.RegisterFunction(explain);
+
 	TableFunction rules("dcs_rules", {LogicalType::VARCHAR}, RulesScan, RulesBind, RulesInit);
 	loader.RegisterFunction(rules);
 
