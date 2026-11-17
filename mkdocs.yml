@@ -1,0 +1,74 @@
+site_name: dmb
+site_description: DuckDB extension that applies DCS sheets (Cascading Duck Sheets) to duck_blocks documents
+site_url: https://duckdb-dmb.readthedocs.io/
+
+repo_name: duckdb_dmb
+repo_url: https://github.com/teaguesterling/duckdb_dmb
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: amber
+      accent: orange
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: amber
+      accent: orange
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+
+plugins:
+  - search
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - tables
+  - admonition
+  - pymdownx.details
+  - toc:
+      permalink: true
+
+# The build brief is a working document for the agent that built dmb, not for readers.
+exclude_docs: |
+  briefs/
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - The DCS language:
+      - Selectors: language/selectors.md
+      - Properties by phase: language/properties.md
+      - Values and the cascade: language/cascade.md
+  - Function reference: reference.md
+  - Cookbook: cookbook.md
+  - Diagnostics: diagnostics.md
+  - Limits: limits.md
+  - Design:
+      - Design documents: design.md
+      - DCS design spec: superpowers/specs/2026-11-13-dcs-design.md
+      - Implementation plan (v1): superpowers/plans/2026-11-13-dmb-v1.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/teaguesterling/duckdb_dmb
