@@ -73,3 +73,44 @@ SELECT dcs_apply([]::duck_block[], 'p { --x: frob(1); }', true);
 ----
 unknown-function at line 1, column 5
 
+
+# A function with the wrong arguments is a sheet fact too (issue #7). The evaluator refuses
+# slug(v, ascii), slug(), attr(a, b) and text(x) on any block, so dcs_check reports each one
+# with the evaluator's own message. Before #7 these gave 0 rows here and failed only at apply.
+query III
+SELECT code, message, "column" FROM dcs_check('h2 { -dcs-id: slug(text(), ascii); }');
+----
+bad-value	-dcs-id: slug() takes one value	6
+
+query II
+SELECT code, message FROM dcs_check('h2 { -dcs-id: slug(); }');
+----
+bad-value	-dcs-id: slug() takes one value
+
+query II
+SELECT code, message FROM dcs_check('p { --a: attr(x, y); }');
+----
+bad-value	--a: attr() takes one attribute name
+
+query II
+SELECT code, message FROM dcs_check('p { --b: text(x); }');
+----
+bad-value	--b: text() takes no argument here
+
+# An argument error inside another function's argument is found too.
+query II
+SELECT code, message FROM dcs_check('h2 { -dcs-id: slug(attr(x, y)); }');
+----
+bad-value	-dcs-id: attr() takes one attribute name
+
+# The forms the evaluator accepts stay clean.
+query I
+SELECT count(*) FROM dcs_check('h2 { -dcs-id: slug(text()); } p { --a: attr(x); --b: slug(attr(x)); }');
+----
+0
+
+# Strict dcs_apply raises it on a document no rule matches, as for an unknown function.
+statement error
+SELECT dcs_apply([]::duck_block[], 'h2 { -dcs-id: slug(text(), ascii); }', true);
+----
+bad-value at line 1, column 6

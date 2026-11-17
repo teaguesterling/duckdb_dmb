@@ -16,8 +16,8 @@ dmb gives a `not-yet` diagnostic for each of these. It never skips one silently.
   The content stays a `raw` row with `attributes['format']` (diagnostic `no-reader`).
 
 One more feature is planned but not built, and it does not give `not-yet`. `slug(v, ascii)`, an
-ASCII (Punycode) form of `slug()`, gives `bad-value` ("slug() takes one value") from `dcs_apply`
-in strict mode. `dcs_check` does not report it (measured 2026-11-16).
+ASCII (Punycode) form of `slug()`, gives `bad-value` ("slug() takes one value"). `dcs_check` and
+strict `dcs_apply` both report it.
 
 ## Nesting
 
