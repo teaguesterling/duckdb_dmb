@@ -21,6 +21,10 @@ bool TokenizeValue(const string &text, vector<Token> &out, string &error);
 //! The shared slug rule: pandoc's auto_identifiers (an empty result is "section"), without de-duplication.
 string Slug(const string &text);
 
+//! The argument error of a text(), attr() or slug() call, or "" if its arguments are right. No block
+//! can change it, so the evaluator and dcs_check share this one rule (issue #7).
+string ArgumentError(const Token &fn);
+
 //! Evaluates values against one block: strings concatenate; attr(x), text(), slug(v), url().
 class ValueEvaluator {
 public:

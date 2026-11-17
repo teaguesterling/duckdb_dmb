@@ -197,6 +197,19 @@ string Slug(const string &text) {
 	return out.empty() ? string("section") : out;
 }
 
+string ArgumentError(const Token &fn) {
+	if (fn.text == "text" && !fn.args.empty()) {
+		return "text() takes no argument here";
+	}
+	if (fn.text == "attr" && (fn.args.size() != 1 || fn.args[0].size() != 1 || fn.args[0][0].kind == Token::FUNCTION)) {
+		return "attr() takes one attribute name";
+	}
+	if (fn.text == "slug" && fn.args.size() != 1) {
+		return "slug() takes one value";
+	}
+	return "";
+}
+
 ValueEvaluator::ValueEvaluator(const BlockTree &tree_p) : tree(tree_p) {
 }
 
@@ -218,25 +231,17 @@ bool ValueEvaluator::Eval(const vector<Token> &tokens, idx_t node, string &out, 
 			break;
 		case Token::FUNCTION: {
 			auto &name = tok.text;
+			error = ArgumentError(tok);
+			if (!error.empty()) {
+				return false;
+			}
 			if (name == "text") {
-				if (!tok.args.empty()) {
-					error = "text() takes no argument here";
-					return false;
-				}
 				piece = tree.Text(node);
 			} else if (name == "attr") {
-				if (tok.args.size() != 1 || tok.args[0].size() != 1 || tok.args[0][0].kind == Token::FUNCTION) {
-					error = "attr() takes one attribute name";
-					return false;
-				}
 				auto key = tok.args[0][0].text;
 				auto v = tree.Attr(node, key);
 				piece = v ? *v : string();
 			} else if (name == "slug") {
-				if (tok.args.size() != 1) {
-					error = "slug() takes one value";
-					return false;
-				}
 				string inner;
 				bool inner_null;
 				if (!Eval(tok.args[0], node, inner, inner_null, error)) {

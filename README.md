@@ -158,8 +158,9 @@ dmb reports each of these as a `not-yet` diagnostic. It never skips one silently
 
 - `:external` and `:internal`. A rule that uses one is skipped.
 - `text-overflow` and `-dcs-link`.
-- `@import`. Other at-rules, such as `@font-face`, are not part of DCS: they give
-  `unsupported-at-rule`.
+- `@import`, and at-rules that tree-sitter-css parses as a general at-rule, such as
+  `@font-face`. `@keyframes`, `@supports`, `@charset` and `@namespace` are not part of DCS: they
+  give `unsupported-at-rule` (measured 2026-11-16).
 - `@media (format: X)`: dmb parses it, but `dcs_apply` has no output format, so these rules never
   apply.
 - `-dcs-as: table` marks a data code block with `attributes['dcs-as'] = 'table'`, but nothing
@@ -176,7 +177,8 @@ pseudo-class arguments. Deeper is a `syntax` error. The tests send 100,000-deep 
 
 A broken sheet never stops a document. dmb parses a sheet one top-level rule at a time, so one bad
 rule does not remove the rules after it. A rule dmb can't use is skipped and given a diagnostic.
-Pass `strict := true` (the third argument) to raise the first diagnostic as an error:
+Pass `true` as the third argument to raise the first diagnostic as an error. It is positional:
+`strict := true` does not bind (measured 2026-11-16).
 
 ```sql
 SELECT dcs_apply(doc, 'p { text-overflow: ellipsis; }', true) FROM docs;

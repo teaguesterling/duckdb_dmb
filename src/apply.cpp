@@ -441,6 +441,23 @@ struct Engine {
 		return "";
 	}
 
+	//! The first argument error (ArgumentError) through every argument; "" if none.
+	static string FirstArgumentError(const vector<Token> &tokens) {
+		for (auto &tok : tokens) {
+			if (tok.kind != Token::FUNCTION) {
+				continue;
+			}
+			auto error = ArgumentError(tok);
+			for (idx_t i = 0; error.empty() && i < tok.args.size(); i++) {
+				error = FirstArgumentError(tok.args[i]);
+			}
+			if (!error.empty()) {
+				return error;
+			}
+		}
+		return "";
+	}
+
 	//! The value checks no document can change: a value that doesn't tokenize, or an unknown
 	//! function. Before these ran here, they were found only when a rule matched a block (M4).
 	void CheckValue(const Declaration &d) {
@@ -461,6 +478,12 @@ struct Engine {
 		auto unknown = UnknownFunction(tokens);
 		if (!unknown.empty()) {
 			Diag("error", "unknown-function", p + ": unknown-function: " + unknown + "()", d.pos);
+			value_reported.insert(d.order);
+			return;
+		}
+		auto argument = FirstArgumentError(tokens);
+		if (!argument.empty()) {
+			Diag("error", "bad-value", p + ": " + argument, d.pos);
 			value_reported.insert(d.order);
 		}
 	}
