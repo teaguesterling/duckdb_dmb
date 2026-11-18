@@ -4,6 +4,8 @@ dmb is a DuckDB extension that runs **DCS** (`.dcs`, Cascading Duck Sheets). A D
 of CSS-shaped rules. dmb applies a sheet to a duck_blocks document and returns a new document.
 Any duck_block_utils renderer can then write the result.
 
+Documentation: https://duckdb-dmb.readthedocs.io/en/latest/
+
 ```css
 heading  { -dcs-id: auto; }                       /* give every heading an anchor id */
 .comment { --audience: "kids"; }                  /* set an attribute */
