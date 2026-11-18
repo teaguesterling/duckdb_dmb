@@ -240,3 +240,8 @@ only.
 The design is in [`docs/superpowers/specs/`](docs/superpowers/specs/2026-11-13-dcs-design.md).
 Spelling changes from it are recorded as decisions D1–D11 in the plan: `:section()` and
 `:matches("…")`, for example.
+
+## License
+
+Apache-2.0: see `LICENSE`. The bundled tree-sitter and tree-sitter-css sources keep their own MIT
+licences, in `third_party/tree-sitter/LICENSE` and `third_party/tree-sitter-css/LICENSE`.
