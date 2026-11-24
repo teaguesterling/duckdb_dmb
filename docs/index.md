@@ -11,7 +11,7 @@ front matter.
 
 !!! warning "Status: early, not released"
     dmb is not in the DuckDB community extensions yet. You build it from source. It targets
-    DuckDB v2.0.0. The [limits](limits.md) page lists what does not work yet.
+    DuckDB v2.0.1. The [limits](limits.md) page lists what does not work yet.
 
 ## Before and after
 

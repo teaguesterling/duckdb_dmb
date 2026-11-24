@@ -17,7 +17,7 @@ h2:contains("Comments") { -dcs-prune: section; }  /* drop a whole section */
 classes, attributes and pruning, structure, content, order, `@frontmatter`, and presentation. The
 gaps are in [What does not work yet](#what-does-not-work-yet). The
 [implementation plan](docs/superpowers/plans/2026-11-13-dmb-v1.md) records every decision. dmb
-targets DuckDB v2.0.0.
+targets DuckDB v2.0.1.
 
 ## Terms
 
@@ -41,8 +41,8 @@ build/release/test/unittest "test/sql/*"
 LOAD 'build/release/extension/dmb/dmb.duckdb_extension';   -- start the CLI with -unsigned
 ```
 
-A local build reports the DuckDB commit (`d54cbbe3df`) as its version, not `v2.0.0`. So it loads
-only in `build/release/duckdb`, and that CLI can't load extensions installed for `v2.0.0`, such as
+A local build reports the DuckDB commit (`8d78114e90`) as its version, not `v2.0.1`. So it loads
+only in `build/release/duckdb`, and that CLI can't load extensions installed for `v2.0.1`, such as
 the markdown and webbed readers (measured 2026-11-14). The examples below build documents as
 literal lists for that reason.
 

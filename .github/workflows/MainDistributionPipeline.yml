@@ -21,8 +21,8 @@ jobs:
   # Copied from sitting_duck's duckdb-v2-test-coverage job, the fleet's measured
   # working config for TESTS on v2.0.0 (158 passed there, 2026-10-25).
   #
-  # duckdb_version is the v2.0.0 TAG, the same commit as the duckdb submodule
-  # (d54cbbe3). No duckdb_tag: in duckdb_webbed, setting it made every test skip
+  # duckdb_version is the v2.0.1 TAG, the same commit as the duckdb submodule
+  # (8d78114e). No duckdb_tag: in duckdb_webbed, setting it made every test skip
   # (0 passed, 123 skipped) while the check stayed green.
   #
   # Every platform the community registry builds: no exclude_archs. If one breaks,
@@ -37,7 +37,7 @@ jobs:
     name: Build extension binaries
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
     with:
-      duckdb_version: v2.0.0
+      duckdb_version: v2.0.1
       ci_tools_version: main
       extension_name: dmb
       # A test file that cannot load dmb SKIPS on `require dmb`, and the runner
