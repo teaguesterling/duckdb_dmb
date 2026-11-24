@@ -33,9 +33,9 @@ SELECT dcs_version() AS version, dcs_parser_abi() AS parser_abi;
 | 0.1.0   | 15         |
 
 !!! note "A local build loads only in its own CLI"
-    A local build reports the DuckDB commit (`d54cbbe3df`) as its version, not `v2.0.0`. So it
+    A local build reports the DuckDB commit (`8d78114e90`) as its version, not `v2.0.1`. So it
     loads only in `build/release/duckdb`. That CLI cannot load extensions installed for
-    `v2.0.0`, such as the markdown and webbed readers. The examples on this site make documents
+    `v2.0.1`, such as the markdown and webbed readers. The examples on this site make documents
     as literal lists for that reason.
 
 ## Make a document
