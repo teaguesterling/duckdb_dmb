@@ -147,6 +147,9 @@ dcs_rules(sheet VARCHAR) -> TABLE(rule, selector, pseudo_element, property, valu
 
 Returns one row for each rule and declaration. The sheet must be a constant.
 
+A rule whose selector was refused keeps its whole selector text, and its `pseudo_element` is NULL:
+`p::before.x` gives the selector `p::before.x`, not `p` with `before`.
+
 ```sql
 SELECT * FROM dcs_rules('h1, h2 { -dcs-id: auto; }
 p.comment { color: red !important; }
