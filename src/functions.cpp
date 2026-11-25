@@ -171,6 +171,7 @@ struct ApplyBindData : public FunctionData {
 };
 
 void ApplyResolveTypes(ResolveScalarFunctionTypesInput &input) {
+	ResolveSheetArgument(input, 1);
 	auto &type = input.GetArgumentType(0);
 	if (type.id() == LogicalTypeId::SQLNULL || type.id() == LogicalTypeId::UNKNOWN) {
 		input.GetBoundFunction().SetReturnType(type);
@@ -197,22 +198,21 @@ unique_ptr<FunctionData> ApplyBind(BindScalarFunctionInput &input) {
 void ApplyFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &func = state.expr.Cast<BoundFunctionExpression>();
 	auto &bind = func.BindInfo()->Cast<ApplyBindData>();
-	string cached_text;
+	Value cached_arg;
 	Sheet cached;
 	bool have_cache = false;
 	for (idx_t row = 0; row < args.size(); row++) {
 		auto blocks = args.data[0].GetValue(row);
-		auto sheet_text = args.data[1].GetValue(row);
+		auto sheet_arg = args.data[1].GetValue(row);
 		bool strict = args.ColumnCount() > 2 && !args.data[2].GetValue(row).IsNull() &&
 		              args.data[2].GetValue(row).GetValue<bool>();
-		if (blocks.IsNull() || sheet_text.IsNull()) {
+		if (blocks.IsNull() || sheet_arg.IsNull()) {
 			result.SetValue(row, Value(result.GetType()));
 			continue;
 		}
-		auto text = sheet_text.ToString();
-		if (!have_cache || text != cached_text) {
-			cached = ParseSheet(text);
-			cached_text = text;
+		if (!have_cache || !Value::NotDistinctFrom(sheet_arg, cached_arg)) {
+			cached = SheetArgument(sheet_arg);
+			cached_arg = sheet_arg;
 			have_cache = true;
 		}
 		auto applied = Apply(blocks, bind.fields, bind.block_type, cached);
@@ -257,6 +257,7 @@ LogicalType ExplainType() {
 }
 
 void ExplainResolveTypes(ResolveScalarFunctionTypesInput &input) {
+	ResolveSheetArgument(input, 1);
 	auto &type = input.GetArgumentType(0);
 	if (type.id() == LogicalTypeId::SQLNULL || type.id() == LogicalTypeId::UNKNOWN) {
 		return;
@@ -277,20 +278,19 @@ void ExplainFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &func = state.expr.Cast<BoundFunctionExpression>();
 	auto &bind = func.BindInfo()->Cast<ApplyBindData>();
 	auto &entry_type = ListType::GetChildType(result.GetType());
-	string cached_text;
+	Value cached_arg;
 	Sheet cached;
 	bool have_cache = false;
 	for (idx_t row = 0; row < args.size(); row++) {
 		auto blocks = args.data[0].GetValue(row);
-		auto sheet_text = args.data[1].GetValue(row);
-		if (blocks.IsNull() || sheet_text.IsNull()) {
+		auto sheet_arg = args.data[1].GetValue(row);
+		if (blocks.IsNull() || sheet_arg.IsNull()) {
 			result.SetValue(row, Value(result.GetType()));
 			continue;
 		}
-		auto text = sheet_text.ToString();
-		if (!have_cache || text != cached_text) {
-			cached = ParseSheet(text);
-			cached_text = text;
+		if (!have_cache || !Value::NotDistinctFrom(sheet_arg, cached_arg)) {
+			cached = SheetArgument(sheet_arg);
+			cached_arg = sheet_arg;
 			have_cache = true;
 		}
 		auto applied = Apply(blocks, bind.fields, bind.block_type, cached);
@@ -335,7 +335,7 @@ void RegisterFunctions(ExtensionLoader &loader) {
 	TableFunction check("dcs_check", {LogicalType::VARCHAR}, RulesScan, CheckBind, RulesInit);
 	loader.RegisterFunction(check);
 
-	ScalarFunction explain("dcs_explain", {LogicalType::ANY, LogicalType::VARCHAR}, ExplainType(), ExplainFun);
+	ScalarFunction explain("dcs_explain", {LogicalType::ANY, LogicalType::ANY}, ExplainType(), ExplainFun);
 	explain.SetResolveTypesCallback(ExplainResolveTypes);
 	explain.SetBindCallback(ExplainBind);
 	explain.SetFallible();
@@ -353,7 +353,7 @@ void RegisterFunctions(ExtensionLoader &loader) {
 
 	ScalarFunctionSet apply("dcs_apply");
 	for (auto with_strict : {false, true}) {
-		vector<LogicalType> arguments {LogicalType::ANY, LogicalType::VARCHAR};
+		vector<LogicalType> arguments {LogicalType::ANY, LogicalType::ANY};
 		if (with_strict) {
 			arguments.push_back(LogicalType::BOOLEAN);
 		}

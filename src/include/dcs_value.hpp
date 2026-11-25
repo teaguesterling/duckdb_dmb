@@ -4,6 +4,9 @@
 
 #include "duckdb.hpp"
 #include "sheet.hpp"
+#include "duckdb/function/scalar_function.hpp"
+
+#include <map>
 
 namespace duckdb {
 class ExtensionLoader;
@@ -20,6 +23,21 @@ Value SheetToDcs(const Sheet &sheet);
 
 //! A JSON object of the given keys, in order; a key with a NULL value is left out. "" when all are.
 string WriteExtra(const vector<std::pair<string, Value>> &keys);
+
+//! Parse a JSON object of scalars into `out` (strings as VARCHAR, integers as BIGINT, true/false as BOOLEAN,
+//! null as a NULL VARCHAR). A nested value is skipped, so unknown keys may hold anything. False, with
+//! `error` set, when the text is not one JSON object. A NULL `extra` gives an empty map.
+bool ReadExtra(const Value &extra, std::map<string, Value> &out, string &error);
+
+//! A DCS value as dmb's internal sheet. Never throws on bad content: what text could not express becomes a
+//! diagnostic, and every other check is left to CheckSheet and Apply, as for text.
+Sheet DcsToSheet(const Value &dcs);
+
+//! The sheet a function was given: a DCS value (any LIST) is converted, anything else is parsed as text.
+Sheet SheetArgument(const Value &arg);
+
+//! Bind-time: argument `index` becomes DcsType() for a LIST, and VARCHAR for any other non-NULL type.
+void ResolveSheetArgument(ResolveScalarFunctionTypesInput &input, idx_t index);
 
 void RegisterDcsType(ExtensionLoader &loader);
 

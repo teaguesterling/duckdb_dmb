@@ -23,11 +23,17 @@ functions, and you use them inside a sheet. See [values](language/cascade.md#val
 ## dcs_apply
 
 ```text
-dcs_apply(blocks, sheet VARCHAR) -> same type as blocks
-dcs_apply(blocks, sheet VARCHAR, strict BOOLEAN) -> same type as blocks
+dcs_apply(blocks, sheet VARCHAR or DCS) -> same type as blocks
+dcs_apply(blocks, sheet VARCHAR or DCS, strict BOOLEAN) -> same type as blocks
 ```
 
 Applies the sheet and returns the new document. The sheet can be different on each row.
+
+The sheet is text or a [`DCS`](#the-dcs-type) value: any list is read as a `DCS` value, and anything
+else as text. A `DCS` value gives the same document as its text. In strict mode, a diagnostic that
+belongs to a rule (its selector, a property or a value) gives the same error for both. A text-level
+diagnostic stays with the text: CSS that does not parse, an `@import` or another at-rule, or a nested
+rule. `dcs_sheet` drops it, so strict mode raises it only for the text.
 
 A problem in the sheet never stops the document: dmb skips the rule or declaration and continues.
 Give `true` as the third argument to raise the first diagnostic as an error. The third argument is
@@ -68,7 +74,7 @@ FROM docs;
 ## dcs_explain
 
 ```text
-dcs_explain(blocks, sheet VARCHAR)
+dcs_explain(blocks, sheet VARCHAR or DCS)
   -> STRUCT(element_order, rule, selector, property, before, after, line, "column")[]
 ```
 

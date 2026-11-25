@@ -542,15 +542,17 @@ bool CompileSelectorNode(TsCtx &ctx, TSNode node, ComplexSelector &out, string &
 	return true;
 }
 
-bool CompileSelectorText(const string &text, ComplexSelector &out, string &pseudo_element,
-                         vector<Diagnostic> &diagnostics, SourcePos pos) {
+//! `lines`, when set, indexes `text + " {}"`, and positions are taken inside `text`.
+static bool CompileSelector(const string &text, ComplexSelector &out, string &pseudo_element,
+                            vector<Diagnostic> &diagnostics, SourcePos pos, bool positions) {
 	if (NestingTooDeep(text)) {
 		diagnostics.push_back(Diagnostic {"error", "syntax", NestingMessage(), pos});
 		return false;
 	}
 	string src = text + " {}";
+	LineIndex index(src);
 	TsTree tree(src);
-	TsCtx ctx {src, 0, nullptr, pos, diagnostics};
+	TsCtx ctx {src, 0, positions ? &index : nullptr, pos, diagnostics};
 	auto root = tree.Root();
 	TSNode selectors;
 	bool found = false;
@@ -570,6 +572,28 @@ bool CompileSelectorText(const string &text, ComplexSelector &out, string &pseud
 		return false;
 	}
 	return CompileSelectorNode(ctx, ts_node_named_child(selectors, 0), out, pseudo_element);
+}
+
+bool CompileSelectorText(const string &text, ComplexSelector &out, string &pseudo_element,
+                         vector<Diagnostic> &diagnostics, SourcePos pos) {
+	return CompileSelector(text, out, pseudo_element, diagnostics, pos, false);
+}
+
+bool CompileSelectorAt(const string &text, ComplexSelector &out, string &pseudo_element,
+                       vector<Diagnostic> &diagnostics, SourcePos origin) {
+	auto first = diagnostics.size();
+	auto ok = CompileSelector(text, out, pseudo_element, diagnostics, SourcePos {1, 1}, true);
+	for (auto i = first; i < diagnostics.size(); i++) {
+		auto &p = diagnostics[i].pos;
+		if (origin.line <= 0) {
+			p = SourcePos {0, 0};
+		} else if (p.line <= 1) {
+			p = SourcePos {origin.line, origin.column + p.column - 1};
+		} else {
+			p = SourcePos {origin.line + p.line - 1, p.column};
+		}
+	}
+	return ok;
 }
 
 Specificity ComputeSpecificity(const ComplexSelector &sel) {

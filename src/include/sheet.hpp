@@ -67,5 +67,10 @@ Sheet ParseSheet(const string &text);
 bool CompileSelectorText(const string &text, ComplexSelector &out, string &pseudo_element,
                          vector<Diagnostic> &diagnostics, SourcePos pos);
 
+//! As CompileSelectorText, but each diagnostic is at its place inside `text`, with `text` starting at
+//! `origin`: the positions a rule's own text gives. An origin of line 0 puts every diagnostic at 0, 0.
+bool CompileSelectorAt(const string &text, ComplexSelector &out, string &pseudo_element,
+                       vector<Diagnostic> &diagnostics, SourcePos origin);
+
 } // namespace dmb
 } // namespace duckdb
