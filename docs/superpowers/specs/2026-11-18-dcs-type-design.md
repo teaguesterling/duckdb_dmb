@@ -1,7 +1,7 @@
 # The DCS type, the DCS readers, and the table form of dcs_apply
 
-Status: **draft for Teague's review (2026-11-18).** Agreed in conversation on 2026-11-18. The
-parts marked *(Claude's call)* are proposals that Teague has not yet seen in this form.
+Status: **approved by Teague on 2026-11-25**, with the parts marked *(Claude's call)* as written,
+to build on DuckDB v2.0.1. Agreed in conversation on 2026-11-18.
 
 ## Why
 
@@ -189,7 +189,7 @@ FROM dcs_apply((FROM read_markdown_blocks('posts/*.md')), 'heading { -dcs-id: au
 
 ## Constraints
 
-- DuckDB v2.0.0. Heavy builds and test runs go through Slurm.
+- DuckDB v2.0.1 (changed from v2.0.0 on 2026-11-25: v2.0.1 is the pin on `main` since PR #12, and Teague approved the build on v2.0.1). Heavy builds and test runs go through Slurm.
 - Change implementation or tests, never both at once. Each new behaviour gets a test that fails
   first.
 - *(Claude's call)* If `JSON` is not available to the loadable dmb on a platform, `extra` is
@@ -208,7 +208,7 @@ FROM dcs_apply((FROM read_markdown_blocks('posts/*.md')), 'heading { -dcs-id: au
   document could reach different thread-local states. The builder makes sure that grouping is
   correct with many threads and many files, for example with one global state, and proves it
   with a test that uses `SET threads` above 1 and an input of more than one chunk (2048 rows).
-- The exact SQL syntax for the input of a table-in-out function on v2.0.0. Measure it before the
+- The exact SQL syntax for the input of a table-in-out function on v2.0.1. Measure it before the
   plan fixes the tests.
 - How `dcs_apply` tells a text sheet from a `DCS` value at bind time.
 - Whether the readers use DuckDB's multi-file reader or a simple glob loop.
