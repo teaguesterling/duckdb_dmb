@@ -13,6 +13,7 @@ type, gives a Binder Error that names the field.
 | [`dcs_check`](#dcs_check) | table | the diagnostics for a sheet |
 | [`dcs_rules`](#dcs_rules) | table | the rules and declarations of a sheet |
 | [`dcs_sheet`](#dcs_sheet) | scalar | a sheet, parsed into a [`DCS`](#the-dcs-type) value |
+| [`dcs_format`](#dcs_format) | scalar | a [`DCS`](#the-dcs-type) value, written as sheet text |
 | [`dcs_parse_markdown`, `dcs_parse_html`](#dcs_parse_markdown-dcs_parse_html) | macro | the document, with marked content parsed by a reader |
 | [`dcs_version`](#dcs_version-dcs_parser_abi) | scalar | the dmb version |
 | [`dcs_parser_abi`](#dcs_version-dcs_parser_abi) | scalar | the tree-sitter-css ABI |
@@ -203,6 +204,32 @@ FROM (SELECT unnest(dcs_sheet('h2, h3::before { content: "#"; }')) AS s);
 |---|---|
 | h2 | {"line":1,"column":1} |
 | h3 | {"pseudo_element":"before","line":1,"column":5} |
+
+## dcs_format
+
+```text
+dcs_format(sheet DCS or VARCHAR) -> VARCHAR
+```
+
+Writes a [`DCS`](#the-dcs-type) value as sheet text, one rule per line, in list order. The rules of a
+split selector list stay split. Values are written as stored. Rules with a media format go inside
+`@media (format: X) { ... }`, one block for each run of rules with the same format. The
+`@frontmatter` entry is written as `@frontmatter { ... }`. Text is parsed first, so
+`dcs_format(text)` gives the text in this form. NULL gives NULL.
+
+For every sheet in dmb's tests, `dcs_apply(doc, dcs_format(dcs_sheet(t)))` gives the same document
+as `dcs_apply(doc, t)`. Comments and whitespace are not kept, so `dcs_explain` gives other lines and
+columns for the formatted text.
+
+```sql
+SELECT dcs_format(dcs_sheet('h2, h3 { color: red } p::before { content: "x" !important }'));
+```
+
+```text
+h2 { color: red; }
+h3 { color: red; }
+p::before { content: "x" !important; }
+```
 
 ## dcs_version, dcs_parser_abi
 

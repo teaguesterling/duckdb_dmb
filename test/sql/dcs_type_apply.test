@@ -52,7 +52,8 @@ CREATE TABLE sheets AS SELECT * FROM (VALUES
   ('@media (format: html) { p { --x: "m"; } } p { --y: "n"; }'),
   (':bogus { --x: "y"; } p { --x: "z"; }'),
   ('#intro { display: none; } #intro + paragraph { --seen: "1"; }'),
-  ('p { -dcs-colour: red; } li::before { content: "- "; }')
+  ('p { -dcs-colour: red; } li::before { content: "- "; }'),
+  ('p { --x: "a" !important; } .note { --x: "b"; }')
 ) v(t);
 
 # dcs_apply: the same document for text and for its DCS value.
@@ -61,7 +62,7 @@ SELECT count(*) FROM sheets, fx WHERE dcs_apply(doc, t) IS DISTINCT FROM dcs_app
 ----
 0
 
-# A guard that the fixture is not trivial: most sheets change the document. (11 of the 16 do, measured
+# A guard that the fixture is not trivial: most sheets change the document. (11 of the first 16 do, measured
 # 2026-11-25; display: contents, -dcs-as, code::after, order and -dcs-dedupe find nothing to change here.)
 query I
 SELECT n >= 10 FROM (SELECT count(*) AS n FROM sheets, fx WHERE dcs_apply(doc, t) IS DISTINCT FROM doc);

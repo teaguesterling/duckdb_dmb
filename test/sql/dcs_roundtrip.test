@@ -1,0 +1,97 @@
+# name: test/sql/dcs_roundtrip.test
+# description: for every sheet in the test suite, text, its DCS value, and dcs_format of that value
+#              apply the same way (the spec's round-trip rule). The sheets are collected into
+#              test/data/roundtrip_sheets.csv by test/data/collect_sheets.py.
+# group: [sql]
+
+require dmb
+
+statement ok
+CREATE TYPE duck_block AS STRUCT(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER,
+    encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
+
+statement ok
+CREATE MACRO b(k, t, c, lvl, attrs, o) AS
+    {'kind': k, 'element_type': t, 'content': c, 'level': lvl, 'encoding': 'text',
+     'attributes': attrs::MAP(VARCHAR, VARCHAR), 'element_order': o}::duck_block;
+
+statement ok
+CREATE TABLE docs AS SELECT * FROM (VALUES
+  ('fx', [
+    b('block', 'heading', 'Intro', 1, MAP {'heading_level': '1', 'id': 'intro'}, 0),
+    b('block', 'paragraph', '', 1, MAP {}, 1),
+    b('inline', 'text', 'Hello world', 2, MAP {}, 2),
+    b('block', 'heading', 'Comments', 1, MAP {'heading_level': '2'}, 3),
+    b('block', 'paragraph', '', 1, MAP {'class': 'note wide'}, 4),
+    b('inline', 'text', 'First', 2, MAP {}, 5),
+    b('block', 'list', '', 1, MAP {'list_type': 'bullet'}, 6),
+    b('block', 'list_item', '', 2, MAP {}, 7),
+    b('inline', 'text', 'a', 3, MAP {}, 8),
+    b('block', 'list_item', '', 2, MAP {}, 9),
+    b('inline', 'text', 'b', 3, MAP {}, 10),
+    b('block', 'heading', 'End', 1, MAP {'heading_level': '2'}, 11),
+    b('block', 'paragraph', '', 1, MAP {}, 12),
+    b('inline', 'text', 'Bye', 2, MAP {}, 13)]),
+  ('mixed', [
+    b('block', 'heading', 'Title', 1, MAP {'heading_level': '1'}, 0),
+    b('block', 'blockquote', '', 1, MAP {}, 1),
+    b('block', 'paragraph', '', 2, MAP {}, 2),
+    b('inline', 'text', 'Quoted ', 3, MAP {}, 3),
+    b('inline', 'link', 'here', 3, MAP {'href': 'https://example.com/x'}, 4),
+    b('block', 'code', 'a,b' || chr(10) || '1,2', 1, MAP {'language': 'csv'}, 5),
+    b('block', 'image', 'pic', 1, MAP {'src': 'p.png'}, 6),
+    b('block', 'heading', 'Comments', 1, MAP {'heading_level': '2'}, 7),
+    b('block', 'paragraph', '', 1, MAP {}, 8),
+    b('inline', 'text', 'Last', 2, MAP {}, 9)])
+) v(name, doc);
+
+statement ok
+CREATE TABLE sheets AS SELECT * FROM read_csv('test/data/roundtrip_sheets.csv', header = true,
+    columns = {'source': 'VARCHAR', 'sheet': 'VARCHAR', 'clean': 'BOOLEAN'});
+
+# The corpus is there: a broken path or an empty file must not pass as "no failures".
+query I
+SELECT count(*) >= 60 FROM sheets;
+----
+true
+
+# Not strict: text, DCS, and the formatted DCS give one document.
+query I
+SELECT count(*) FROM sheets, docs
+WHERE dcs_apply(doc, sheet) IS DISTINCT FROM dcs_apply(doc, dcs_sheet(sheet))
+   OR dcs_apply(doc, sheet) IS DISTINCT FROM dcs_apply(doc, dcs_format(dcs_sheet(sheet)));
+----
+0
+
+# dcs_explain: the DCS value keeps every position, so it gives the same entries, line and column included.
+query I
+SELECT count(*) FROM sheets, docs WHERE dcs_explain(doc, sheet) IS DISTINCT FROM dcs_explain(doc, dcs_sheet(sheet));
+----
+0
+
+# The formatted text has its own lines and columns (whitespace is not kept), so compare without them.
+statement ok
+CREATE MACRO changes(doc, s) AS list_transform(dcs_explain(doc, s), lambda c: struct_pack(
+    element_order := c.element_order, rule := c.rule, selector := c.selector, property := c.property,
+    before := c.before, after := c.after));
+
+query I
+SELECT count(*) FROM sheets, docs
+WHERE changes(doc, sheet) IS DISTINCT FROM changes(doc, dcs_format(dcs_sheet(sheet)));
+----
+0
+
+# The round trip is stable: formatting the formatted text changes nothing.
+query I
+SELECT count(*) FROM sheets
+WHERE dcs_format(dcs_sheet(sheet)) IS DISTINCT FROM dcs_format(dcs_sheet(dcs_format(dcs_sheet(sheet))));
+----
+0
+
+# Strict, for the sheets with no diagnostics: each form succeeds or fails alike, with the same result.
+query I
+SELECT count(*) FROM sheets, docs
+WHERE clean AND (try(dcs_apply(doc, sheet, true)) IS DISTINCT FROM try(dcs_apply(doc, dcs_sheet(sheet), true))
+              OR try(dcs_apply(doc, sheet, true)) IS DISTINCT FROM try(dcs_apply(doc, dcs_format(dcs_sheet(sheet)), true)));
+----
+0

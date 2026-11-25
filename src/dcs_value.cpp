@@ -589,6 +589,71 @@ void ResolveSheetArgument(ResolveScalarFunctionTypesInput &input, idx_t index) {
 	}
 }
 
+string FormatDcs(const Value &dcs) {
+	string out;
+	string open_media;
+	auto close_media = [&]() {
+		if (!open_media.empty()) {
+			out += "}\n";
+			open_media.clear();
+		}
+	};
+	auto keys_of = [](const Value &extra) {
+		std::map<string, Value> keys;
+		string error;
+		if (!ReadExtra(extra, keys, error)) {
+			keys.clear();
+		}
+		return keys;
+	};
+	auto text_of = [](std::map<string, Value> &keys, const string &key) {
+		auto it = keys.find(key);
+		return it == keys.end() || it->second.IsNull() ? string() : it->second.ToString();
+	};
+	for (auto &entry : ListValue::GetChildren(dcs)) {
+		if (entry.IsNull()) {
+			continue;
+		}
+		auto keys = keys_of(*Child(entry, 3));
+		auto media = text_of(keys, "media");
+		auto &meta = *Child(entry, 1);
+		bool frontmatter = !meta.IsNull() && meta.ToString() == "frontmatter";
+		if (frontmatter || media != open_media) {
+			close_media();
+		}
+		if (!frontmatter && !media.empty() && open_media.empty()) {
+			out += "@media (format: " + media + ") {\n";
+			open_media = media;
+		}
+		if (frontmatter) {
+			out += "@frontmatter";
+		} else {
+			out += Str(*Child(entry, 0));
+			auto pseudo = text_of(keys, "pseudo_element");
+			if (!pseudo.empty()) {
+				out += "::" + pseudo;
+			}
+		}
+		out += " {";
+		auto &declarations = *Child(entry, 2);
+		if (!declarations.IsNull()) {
+			for (auto &d : ListValue::GetChildren(declarations)) {
+				if (d.IsNull()) {
+					continue;
+				}
+				auto dkeys = keys_of(*Child(d, 2));
+				auto important = dkeys.find("important");
+				bool is_important = important != dkeys.end() && important->second.type().id() == LogicalTypeId::BOOLEAN &&
+				                    important->second.GetValue<bool>();
+				out += " " + Str(*Child(d, 0)) + ": " + Str(*Child(d, 1)) + (is_important ? " !important" : "") + ";";
+			}
+		}
+		out += " }\n";
+	}
+	close_media();
+	return out;
+}
+
 void RegisterDcsType(ExtensionLoader &loader) {
 	loader.RegisterType("DCS", DcsType());
 }

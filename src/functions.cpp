@@ -326,11 +326,36 @@ void SheetFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// dcs_format(sheet): a DCS value (or text, parsed first) as .dcs text
+// ---------------------------------------------------------------------------
+
+void FormatResolveTypes(ResolveScalarFunctionTypesInput &input) {
+	ResolveSheetArgument(input, 0);
+}
+
+void FormatFun(DataChunk &args, ExpressionState &state, Vector &result) {
+	for (idx_t row = 0; row < args.size(); row++) {
+		auto sheet = args.data[0].GetValue(row);
+		if (sheet.IsNull()) {
+			result.SetValue(row, Value(LogicalType::VARCHAR));
+			continue;
+		}
+		auto value = sheet.type().id() == LogicalTypeId::LIST ? sheet : SheetToDcs(ParseSheet(sheet.ToString()));
+		result.SetValue(row, Value(FormatDcs(value)));
+	}
+}
+
 } // namespace
 
 void RegisterFunctions(ExtensionLoader &loader) {
 	RegisterDcsType(loader);
 	loader.RegisterFunction(ScalarFunction("dcs_sheet", {LogicalType::VARCHAR}, DcsType(), SheetFun));
+	{
+		ScalarFunction format("dcs_format", {LogicalType::ANY}, LogicalType::VARCHAR, FormatFun);
+		format.SetResolveTypesCallback(FormatResolveTypes);
+		loader.RegisterFunction(format);
+	}
 
 	TableFunction check("dcs_check", {LogicalType::VARCHAR}, RulesScan, CheckBind, RulesInit);
 	loader.RegisterFunction(check);

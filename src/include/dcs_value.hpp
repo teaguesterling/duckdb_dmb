@@ -39,6 +39,10 @@ Sheet SheetArgument(const Value &arg);
 //! Bind-time: argument `index` becomes DcsType() for a LIST, and VARCHAR for any other non-NULL type.
 void ResolveSheetArgument(ResolveScalarFunctionTypesInput &input, idx_t index);
 
+//! A DCS value as .dcs text: one rule per line, in list order, values as stored. Rules with a media format
+//! go in @media (format: X) { ... }, one block for each run of adjacent rules with the same format.
+string FormatDcs(const Value &dcs);
+
 void RegisterDcsType(ExtensionLoader &loader);
 
 } // namespace dmb
