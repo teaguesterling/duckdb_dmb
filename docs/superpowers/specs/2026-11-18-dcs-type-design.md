@@ -76,6 +76,34 @@ DCS = LIST(STRUCT(
 Registered by name, as `loader.RegisterType("DCS", ...)`, the way duckdb_webbed registers `XML`
 (`duckdb_webbed/src/xml_types.cpp:119`).
 
+**Amended 2026-11-25, while building (Claude's call; not yet approved by Teague): the type is registered
+without an alias.** webbed's `XML` is a `VARCHAR` with the alias `XML`. The same for a list type breaks
+the list functions on DuckDB v2.0.1. Measured on linux_amd64 with a probe type
+`LIST(STRUCT(selector VARCHAR, extra JSON))` registered with `WithAlias("DCS_PROBE")`:
+
+```
+SELECT len(dcs_probe_value());
+Binder Error: No function matches the given name and argument types 'len(DCS_PROBE)'.
+SELECT dcs_probe_value()[1];
+Binder Error: No function matches the given name and argument types 'array_extract(DCS_PROBE, INTEGER_LITERAL)'.
+SELECT list_transform(dcs_probe_value(), lambda r: r.selector);
+Binder Error: No function matches the given name and argument types 'list_transform(DCS_PROBE, LAMBDA)'.
+```
+
+`list_concat` fails the same way. A cast to the plain struct list does not remove the alias, so
+`(v::STRUCT(...)[])[1]` fails too. Only `unnest` works. The same type registered without an alias passes
+all of these. `::DCS` and a column declared `DCS` still work.
+
+What a user loses without the alias:
+
+- `typeof(v)`, `DESCRIBE` and `information_schema.columns` show the struct list, not `DCS`.
+- A function signature cannot ask for `DCS` as distinct from an equal struct list. dmb's functions do
+  not need this: they take the sheet as `ANY` and decide by structure (a list is a `DCS` value, anything
+  else is text), so a value read back from Parquet, which loses any alias, still works.
+- An extension or a user cannot overload a function on `DCS` alone.
+
+If DuckDB makes list functions accept an aliased list, the alias can be added back without changing a value.
+
 **One list entry is one rule after selector lists are split.** `h2, h3 { ... }` becomes two
 entries with the same declarations. This is what `Rule` holds today (`src/include/sheet.hpp:38`)
 and what `dcs_rules` shows.
