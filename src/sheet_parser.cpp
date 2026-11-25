@@ -327,7 +327,11 @@ struct Builder {
 			rule.declarations = decls;
 			rule.usable = CompileSelectorNode(ctx, sel, rule.selector, rule.pseudo_element);
 			rule.selector_text = ctx.Text(sel);
-			if (!rule.pseudo_element.empty()) {
+			if (!rule.usable) {
+				// A refused selector keeps its whole text: compiling can set the pseudo-element before it
+				// fails (p::before.x), and cutting at "::" would turn the refused rule into a valid p::before.
+				rule.pseudo_element.clear();
+			} else if (!rule.pseudo_element.empty()) {
 				auto cut = rule.selector_text.rfind("::");
 				if (cut != string::npos) {
 					rule.selector_text = rule.selector_text.substr(0, cut);

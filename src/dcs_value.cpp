@@ -1,7 +1,6 @@
 #include "dcs_value.hpp"
 
 #include "duckdb/main/extension/extension_loader.hpp"
-#include "values.hpp"
 
 namespace duckdb {
 namespace dmb {
@@ -154,6 +153,26 @@ struct JsonReader {
 		}
 		return false;
 	}
+	bool Hex4(size_t at, uint32_t &code) {
+		if (at + 4 > s.size()) {
+			return false;
+		}
+		code = 0;
+		for (size_t k = at; k < at + 4; k++) {
+			char h = s[k];
+			code <<= 4;
+			if (h >= '0' && h <= '9') {
+				code |= h - '0';
+			} else if (h >= 'a' && h <= 'f') {
+				code |= h - 'a' + 10;
+			} else if (h >= 'A' && h <= 'F') {
+				code |= h - 'A' + 10;
+			} else {
+				return false;
+			}
+		}
+		return true;
+	}
 	bool String(string &out) {
 		if (i >= s.size() || s[i] != '"') {
 			return Fail("expected a string");
@@ -188,13 +207,28 @@ struct JsonReader {
 				out += '\f';
 				break;
 			case 'u': {
-				if (i + 4 >= s.size()) {
-					return Fail("a short \\u escape");
+				uint32_t code;
+				if (!Hex4(i + 1, code)) {
+					return Fail("a \\u escape needs four hex digits");
 				}
-				auto code = std::strtoul(s.substr(i + 1, 4).c_str(), nullptr, 16);
 				i += 4;
-				// UTF-8 for the basic plane; surrogate pairs are not needed for dmb's own keys
-				if (code < 0x80) {
+				if (code >= 0xD800 && code < 0xDC00) { // a surrogate pair: \uD83D\uDE00
+					uint32_t low;
+					if (i + 2 >= s.size() || s[i + 1] != '\\' || s[i + 2] != 'u' || !Hex4(i + 3, low) || low < 0xDC00 ||
+					    low >= 0xE000) {
+						return Fail("a lone surrogate in a \\u escape");
+					}
+					i += 6;
+					code = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
+				} else if (code >= 0xDC00 && code < 0xE000) {
+					return Fail("a lone surrogate in a \\u escape");
+				}
+				if (code >= 0x10000) {
+					out += static_cast<char>(0xF0 | (code >> 18));
+					out += static_cast<char>(0x80 | ((code >> 12) & 0x3F));
+					out += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
+					out += static_cast<char>(0x80 | (code & 0x3F));
+				} else if (code < 0x80) {
 					out += static_cast<char>(code);
 				} else if (code < 0x800) {
 					out += static_cast<char>(0xC0 | (code >> 6));
@@ -349,28 +383,25 @@ SourcePos ExtraPos(std::map<string, Value> &keys, const string &what, vector<Dia
 	return pos;
 }
 
-//! What text cannot express in a value: a top-level ';' or '}', or a trailing !important.
+//! What text cannot hold in a value: an unterminated string, a comment, a ';', '{' or '}' outside a
+//! string, or a trailing !important. Every other value check is left to CheckSheet and Apply, as for text:
+//! the parser does not tokenize values, so the converter must not either (the spec's first anti-goal).
 string ValueProblem(const string &value) {
-	vector<Token> tokens;
-	string error;
-	if (!TokenizeValue(value, tokens, error)) {
-		return error;
-	}
-	int depth = 0;
 	for (size_t i = 0; i < value.size(); i++) {
 		char c = value[i];
 		if (c == '"' || c == '\'') {
-			for (i++; i < value.size() && value[i] != c; i++) {
-				if (value[i] == '\\') {
-					i++;
-				}
+			size_t j = i + 1;
+			while (j < value.size() && value[j] != c && value[j] != '\n') {
+				j += value[j] == '\\' ? 2 : 1;
 			}
-		} else if (c == '(') {
-			depth++;
-		} else if (c == ')') {
-			depth--;
-		} else if (depth == 0 && (c == ';' || c == '}' || c == '{')) {
-			return string("a value can't hold a top-level '") + c + "'";
+			if (j >= value.size() || value[j] != c) {
+				return "an unterminated string";
+			}
+			i = j;
+		} else if (c == '/' && i + 1 < value.size() && value[i + 1] == '*') {
+			return "a value can't hold a comment";
+		} else if (c == ';' || c == '}' || c == '{') {
+			return string("a value can't hold '") + c + "' outside a string";
 		}
 	}
 	auto end = value.find_last_not_of(" \t\r\n");
@@ -381,16 +412,22 @@ string ValueProblem(const string &value) {
 	return "";
 }
 
+//! A property name as text can write it: letters, digits, '-', '_', and any non-ASCII character.
 bool IdentText(const string &s) {
 	if (s.empty()) {
 		return false;
 	}
-	for (char c : s) {
-		if (!(isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_')) {
+	for (unsigned char c : s) {
+		if (!(c >= 0x80 || isalnum(c) || c == '-' || c == '_')) {
 			return false;
 		}
 	}
 	return true;
+}
+
+//! A media format text can write in @media (format: X): no space, bracket, ';' or ','.
+bool MediaText(const string &s) {
+	return !s.empty() && s.find_first_of(" \t\r\n(){};,") == string::npos;
 }
 
 vector<Declaration> Declarations(const Value &list, int32_t &order, vector<Diagnostic> &diagnostics) {
@@ -416,7 +453,7 @@ vector<Declaration> Declarations(const Value &list, int32_t &order, vector<Diagn
 			    property.empty() ? "a declaration needs a property" : "not a property name: " + property, decl.pos});
 			continue;
 		}
-		if (value.IsNull()) {
+		if (value.IsNull() || value.ToString().find_first_not_of(" \t\r\n") == string::npos) {
 			diagnostics.push_back(Diagnostic {"error", "empty-value", "declaration has no value: " + property, decl.pos});
 			continue;
 		}
@@ -550,7 +587,7 @@ Sheet DcsToSheet(const Value &dcs) {
 		rule.pos = pos;
 		rule.pseudo_element = pseudo;
 		rule.declarations = std::move(decls);
-		if (!media.empty() && !IdentText(media)) {
+		if (!media.empty() && !MediaText(media)) {
 			diags.push_back(Diagnostic {"error", "syntax", "not a media format: " + media, pos});
 			media.clear();
 			rule.usable = false;

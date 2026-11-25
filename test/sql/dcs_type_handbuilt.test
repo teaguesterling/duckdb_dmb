@@ -49,6 +49,35 @@ SELECT dcs_apply(doc, [e('p', NULL, [d('--x', 'red !important', NULL)], NULL)], 
 ----
 dcs_apply: bad-value at line 0, column 0
 
+# An empty or blank value: text gives empty-value for it.
+statement error
+SELECT dcs_apply(doc, [e('p', NULL, [d('--x', '', NULL)], NULL)], true) FROM fx;
+----
+dcs_apply: empty-value at line 0, column 0
+
+statement error
+SELECT dcs_apply(doc, [e('p', NULL, [d('--x', '   ', NULL)], NULL)], true) FROM fx;
+----
+dcs_apply: empty-value at line 0, column 0
+
+# A comment or an unterminated string in a value: text strips comments, and a string can't hold the
+# end of the declaration.
+statement error
+SELECT dcs_apply(doc, [e('p', NULL, [d('--x', '"a" /* x */', NULL)], NULL)], true) FROM fx;
+----
+dcs_apply: bad-value at line 0, column 0
+
+statement error
+SELECT dcs_apply(doc, [e('p', NULL, [d('width', '"a', NULL)], NULL)], true) FROM fx;
+----
+dcs_apply: bad-value at line 0, column 0
+
+# A property name with non-ASCII letters is a name, as in text.
+query I
+SELECT dcs_apply(doc, [e('p', NULL, [d('--naïve', '"x"', NULL)], NULL)], true)[1].attributes FROM fx;
+----
+{naïve=x}
+
 # A property that is empty, NULL, or not a name.
 statement error
 SELECT dcs_apply(doc, [e('p', NULL, [d('', '"a"', NULL)], NULL)], true) FROM fx;
@@ -93,6 +122,24 @@ statement error
 SELECT dcs_apply(doc, [e('p', NULL, [d('--x', '"a"', NULL)], '{"media":"a) b"}')], true) FROM fx;
 ----
 dcs_apply: syntax at line 0, column 0: not a media format
+
+# extra that is valid JSON but not an object (valid in both json states, so dmb's reader decides).
+statement error
+SELECT dcs_apply(doc, [e('p', NULL, [d('--x', '"a"', NULL)], '[1]')], true) FROM fx;
+----
+dcs_apply: bad-extra at line 0, column 0
+
+# A \u escape that is not four hex digits is not JSON.
+statement error
+SELECT dcs_apply(doc, [e('p', NULL, [d('--x', '"a"', NULL)], '{"note":"\u12"}')], true) FROM fx;
+----
+dcs_apply: bad-extra at line 0, column 0
+
+# A surrogate pair under an unknown key is ignored, like any unknown key.
+query I
+SELECT dcs_apply(doc, [e('p', NULL, [d('--x', '"a"', NULL)], '{"note":"\ud83d\ude00"}')], true)[1].attributes FROM fx;
+----
+{x=a}
 
 # A known extra key of the wrong JSON type.
 statement error

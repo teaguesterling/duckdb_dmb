@@ -69,6 +69,11 @@ dcs_apply_structure.test,paragraph { -dcs-level: +1; } paragraph { -dcs-as: tabl
 dcs_apply_structure.test,paragraph { -dcs-level: +1; },true
 dcs_apply_structure.test,paragraph { -dcs-as: table; },true
 dcs_apply_structure.test,paragraph { display: contents; },true
+dcs_apply_table.test,"heading { -dcs-id: auto; } .note { --x: ""b""; }",true
+dcs_apply_table.test,"list { display: none; } p::before { content: ""> ""; }",true
+dcs_apply_table.test,"p { --x: ""a""; }",true
+dcs_apply_table.test,"h2:bogus { --x: ""a""; }",false
+dcs_apply_table.test,"p:first-child { --first: ""y""; }",true
 dcs_check.test,"heading { -dcs-id: auto; } .comment { --audience: ""kids""; }",true
 dcs_check.test,"p { a: b; }
 [x >= 2] { a: b; }",false
@@ -84,7 +89,6 @@ dcs_check.test,"p { --a: attr(x, y); }",false
 dcs_check.test,p { --b: text(x); },false
 dcs_check.test,"h2 { -dcs-id: slug(attr(x, y)); }",false
 dcs_check.test,h2 { -dcs-id: slug(text()); } p { --a: attr(x); --b: slug(attr(x)); },true
-dcs_explain.test,"p { --x: ""a""; }",true
 dcs_explain.test,"p { --x: ""a""; } .note { --x: ""b""; }",true
 dcs_explain.test,"p {
   color: red;
@@ -112,6 +116,14 @@ dcs_format.test,"p::before { content: ""x"" !important; }",true
 dcs_format.test,"@media (format: html) { p { --x: ""m""; } h2 { --y: ""n""; } } p { --z: ""o""; }",false
 dcs_format.test,"@frontmatter { title: ""a""; } p { color: red; }",true
 dcs_format.test,"h2,h3{color:red}",true
+dcs_readers.test,"@import ""x.dcs"";
+p { color: blue; p { color: red; } }
+",false
+dcs_readers.test,"/* headings */
+h2, h3 { color: red; }
+p::before { content: ""x""; }
+@frontmatter { title: ""t""; }
+",true
 dcs_review_fixes.test,"list, image { -dcs-dedupe: text; }",true
 dcs_review_fixes.test,li:nth-child(99999999999n) { a: b; } p { c: d; },false
 dcs_review_fixes.test,"li:nth-child(99999999999n) { --a: ""b""; }",false
@@ -138,6 +150,7 @@ dcs_sheet.test,"h2, h3 { color: red; }",true
 dcs_sheet.test,@media (format: html) { p { color: red; } },false
 dcs_sheet.test,"@frontmatter { title: ""a""; } p { color: red; } @frontmatter { draft: ""y""; }",true
 dcs_sheet.test,p:bogus { color: red; },false
+dcs_sheet.test,"p::before.x { content: ""z""; }",false
 dcs_sheet.test,"@import ""x""; p { color: red; }",false
 dcs_sheet.test,"p { --x: ""a"" attr(id); }",true
 dcs_type_apply.test,blockquote { order: 1; } p { order: first; },false
@@ -147,10 +160,22 @@ dcs_type_apply.test,"@media (format: html) { p { --x: ""m""; } } p { --y: ""n"";
 dcs_type_apply.test,":bogus { --x: ""y""; } p { --x: ""z""; }",false
 dcs_type_apply.test,"p { -dcs-colour: red; } li::before { content: ""- ""; }",false
 dcs_type_apply.test,"p { --x: ""a"" !important; } .note { --x: ""b""; }",true
+dcs_type_apply.test,"p { --x: ""a""; } p { --x: attr(; }",false
+dcs_type_apply.test,p { width: calc((100% - 2px) / 2); },true
+dcs_type_apply.test,"p { --naïve: ""x""; }",true
+dcs_type_apply.test,"@media (format: ""html"") { p { --x: ""a""; } } p { --y: ""b""; }",false
 dcs_type_apply.test,"p { } h2:bogus { --x: ""a""; }",false
 dcs_type_apply.test,p { --x: attr(; },false
 dcs_type_apply.test,"h2:contains(""é""), p:bogus { --x: ""a""; }",false
 dcs_type_apply.test,p { },true
 dcs_type_apply.test,"  h2 { } h3:bogus { --x: ""a""; }",false
 dcs_type_apply.test,"h2, h3 { --x: attr(; }",false
+dcs_type_apply.test,"p { --x: attr(; } h2:bogus { --y: ""a""; }",false
+dcs_type_apply.test,"@media (format: ""html"") { p { --x: ""a""; } }",false
 dcs_type_apply.test,"@import ""x""; p { --x: ""a""; }",false
+dcs_type_handbuilt.test,")], true)[1].attributes FROM fx;
+----
+{x=a}
+
+statement error
+SELECT dcs_apply(doc, [e(",false

@@ -75,6 +75,13 @@ SELECT len(s), s[1].selector FROM (SELECT dcs_sheet('p:bogus { color: red; }') A
 ----
 1	p:bogus
 
+# A refused selector keeps its whole text, with no pseudo-element: otherwise p::before.x (refused) would
+# come back as p plus pseudo_element before, a valid rule (found by review, 2026-11-25).
+query II
+SELECT s[1].selector, s[1].extra FROM (SELECT dcs_sheet('p::before.x { content: "z"; }') AS s);
+----
+p::before.x	{"line":1,"column":1}
+
 # Text-level diagnostics (here @import) are dropped: dcs_check shows them for the text.
 query I
 SELECT len(dcs_sheet('@import "x"; p { color: red; }'));

@@ -53,7 +53,13 @@ CREATE TABLE sheets AS SELECT * FROM (VALUES
   (':bogus { --x: "y"; } p { --x: "z"; }'),
   ('#intro { display: none; } #intro + paragraph { --seen: "1"; }'),
   ('p { -dcs-colour: red; } li::before { content: "- "; }'),
-  ('p { --x: "a" !important; } .note { --x: "b"; }')
+  ('p { --x: "a" !important; } .note { --x: "b"; }'),
+  -- found by the fresh review (2026-11-25): each applied differently as DCS
+  ('p::before.x { content: "z"; }'),
+  ('p { --x: "a"; } p { --x: attr(; }'),
+  ('p { width: calc((100% - 2px) / 2); }'),
+  ('p { --naïve: "x"; }'),
+  ('@media (format: "html") { p { --x: "a"; } } p { --y: "b"; }')
 ) v(t);
 
 # dcs_apply: the same document for text and for its DCS value.
@@ -138,6 +144,37 @@ statement error
 SELECT dcs_apply(doc, dcs_sheet('h2, h3 { --x: attr(; }'), true) FROM fx;
 ----
 dcs_apply: bad-value at line 1, column 10: --x: unbalanced parentheses
+
+# A refused selector stays refused: a pseudo-element that is not last.
+statement error
+SELECT dcs_apply(doc, dcs_sheet('p::before.x { content: "z"; }'), true) FROM fx;
+----
+dcs_apply: pseudo-element-not-last at line 1, column 1: a pseudo-element must end its selector
+
+# Diagnostics come in the text's order: a selector diagnostic before a value diagnostic.
+statement error
+SELECT dcs_apply(doc, 'p { --x: attr(; } h2:bogus { --y: "a"; }', true) FROM fx;
+----
+dcs_apply: unknown-pseudo-class at line 1, column 19: unknown pseudo-class :bogus
+
+statement error
+SELECT dcs_apply(doc, dcs_sheet('p { --x: attr(; } h2:bogus { --y: "a"; }'), true) FROM fx;
+----
+dcs_apply: unknown-pseudo-class at line 1, column 19: unknown pseudo-class :bogus
+
+# A media format in quotes: text warns not-yet, and so does its DCS value.
+statement error
+SELECT dcs_apply(doc, dcs_sheet('@media (format: "html") { p { --x: "a"; } }'), true) FROM fx;
+----
+dcs_apply: not-yet at line 1, column 27: @media (format: "html") rules are not applied yet
+
+# A value the value lexer can't read, on a property that is not evaluated: text has no diagnostic,
+# so neither has its DCS value, in strict mode too.
+query I
+SELECT dcs_apply(doc, dcs_sheet('p { width: calc((100% - 2px) / 2); }'), true)
+     = dcs_apply(doc, 'p { width: calc((100% - 2px) / 2); }', true) FROM fx;
+----
+true
 
 # A text-level diagnostic stays with the text: strict text throws, its DCS value does not (intended).
 statement error
