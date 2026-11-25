@@ -1,0 +1,18 @@
+# name: test/sql/dcs_type_bad_json_loaded.test
+# description: with the json extension loaded, a cast to DCS refuses extra that is not JSON, before dmb
+#              sees it. Its own file: `require json` skips a whole file when json is missing.
+# group: [sql]
+
+require dmb
+
+require json
+
+statement ok
+CREATE TABLE fx AS SELECT [{'kind': 'block', 'element_type': 'paragraph', 'content': '', 'level': 1,
+    'encoding': 'text', 'attributes': MAP {}::MAP(VARCHAR, VARCHAR), 'element_order': 0}] AS doc;
+
+statement error
+SELECT dcs_apply(doc, [{'selector': 'p', 'meta': NULL::VARCHAR, 'extra': 'not json',
+    'declarations': [{'property': '--x', 'value': '"a"', 'extra': NULL::VARCHAR}]}]) FROM fx;
+----
+Malformed JSON

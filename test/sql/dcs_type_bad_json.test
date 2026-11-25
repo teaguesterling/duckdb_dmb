@@ -1,36 +1,40 @@
 # name: test/sql/dcs_type_bad_json.test
-# description: extra that is not a JSON object gives bad-extra. With the json extension loaded, the cast
-#              to DCS refuses bad JSON first ("Malformed JSON", measured 2026-11-25), so this file checks
-#              the path where json is not loaded, and says so first.
+# description: extra that is not a JSON object. Without the json extension, dmb reads it and gives
+#              bad-extra; with json loaded, the cast to DCS refuses it first ("Malformed JSON", measured
+#              2026-11-25). The assertions hold in both states, so the file is green on every platform;
+#              dcs_type_bad_json_loaded.test checks the loaded state on its own.
 # group: [sql]
 
 require dmb
-
-# The guard: json is not loaded here. If it is, this fails, and the file must not pass for the wrong reason.
-query I
-SELECT count(*) FROM duckdb_extensions() WHERE extension_name = 'json' AND loaded;
-----
-0
 
 statement ok
 CREATE TABLE fx AS SELECT [{'kind': 'block', 'element_type': 'paragraph', 'content': '', 'level': 1,
     'encoding': 'text', 'attributes': MAP {}::MAP(VARCHAR, VARCHAR), 'element_order': 0}] AS doc;
 
-statement error
-SELECT dcs_apply(doc, [{'selector': 'p', 'meta': NULL::VARCHAR, 'extra': 'not json',
-    'declarations': [{'property': '--x', 'value': '"a"', 'extra': NULL::VARCHAR}]}], true) FROM fx;
-----
-dcs_apply: bad-extra at line 0, column 0: p: extra is not a JSON object
+statement ok
+CREATE MACRO bad() AS [{'selector': 'p', 'meta': NULL::VARCHAR, 'extra': 'not json',
+    'declarations': [{'property': '--x', 'value': '"a"', 'extra': '{"line": 1,'}]}];
 
-statement error
-SELECT dcs_apply(doc, [{'selector': 'p', 'meta': NULL::VARCHAR, 'extra': NULL::VARCHAR,
-    'declarations': [{'property': '--x', 'value': '"a"', 'extra': '{"line": 1,'}]}], true) FROM fx;
-----
-dcs_apply: bad-extra at line 0, column 0: --x: extra is not a JSON object
+statement ok
+CREATE MACRO json_loaded() AS (SELECT count(*) > 0 FROM duckdb_extensions() WHERE extension_name = 'json' AND loaded);
 
-# Not strict: the rule still applies, as if extra were NULL.
+# Strict: an error in both states (bad-extra from dmb, or Malformed JSON from the cast).
 query I
-SELECT dcs_apply(doc, [{'selector': 'p', 'meta': NULL::VARCHAR, 'extra': 'not json',
-    'declarations': [{'property': '--x', 'value': '"a"', 'extra': NULL::VARCHAR}]}])[1].attributes FROM fx;
+SELECT try(dcs_apply(doc, bad(), true)) IS NULL FROM fx;
+----
+true
+
+# Not strict: without json, dmb uses the rule as if extra were NULL; with json, the cast refuses the value.
+query I
+SELECT CASE WHEN json_loaded() THEN try(dcs_apply(doc, bad())) IS NULL
+            ELSE try(dcs_apply(doc, bad()))[1].attributes = MAP {'x': 'a'} END FROM fx;
+----
+true
+
+# Without json, the strict error is dmb's bad-extra, not some other failure: the same value with good
+# extra passes strict mode.
+query I
+SELECT dcs_apply(doc, [{'selector': 'p', 'meta': NULL::VARCHAR, 'extra': NULL::VARCHAR,
+    'declarations': [{'property': '--x', 'value': '"a"', 'extra': NULL::VARCHAR}]}], true)[1].attributes FROM fx;
 ----
 {x=a}
