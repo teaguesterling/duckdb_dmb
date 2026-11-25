@@ -64,6 +64,24 @@ The rows are not always in line order.
 | `nested-rule` | warning | a rule inside a rule |
 | `pseudo-only` | warning | a property that applies only to `::before` and `::after` content, used on a block |
 | `no-reader` | warning | `-dcs-content-as` with a format that has no reader |
+| `bad-extra` | error | a hand-built [`DCS`](reference.md#the-dcs-type) value whose `extra` is not a JSON object, or has a known key of the wrong JSON type |
+
+A hand-built [`DCS`](reference.md#the-dcs-type) value gets the codes that text gets. dmb also
+refuses what no text can express, so that every value it accepts can be written as text and read
+back:
+
+| Hand-built case | Code |
+|---|---|
+| a selector with a top-level comma | `selector-list` |
+| a pseudo-element in `selector` and also in `extra.pseudo_element` | `pseudo-element-not-last` |
+| a `value` that does not tokenize, holds a top-level `;`, `{` or `}`, or ends in `!important` | `bad-value` |
+| a `property` that is NULL, empty or not a name; a plain rule with a NULL `selector` | `syntax` |
+| a `meta` other than NULL and `'frontmatter'`, two frontmatter entries, a frontmatter entry with `media`, or a `media` that is not a name | `syntax` |
+| `extra` that is not a JSON object, or a known key of the wrong JSON type | `bad-extra` |
+
+The position comes from `extra.line` and `extra.column`, and is line 0, column 0 when they are
+not there. With the json extension loaded, a cast to `DCS` refuses JSON that does not parse before
+dmb sees it.
 
 `@font-face` and other at-rules that tree-sitter-css parses as a general at-rule give `not-yet`.
 `@keyframes`, `@supports`, `@charset` and `@namespace` give `unsupported-at-rule` (measured).

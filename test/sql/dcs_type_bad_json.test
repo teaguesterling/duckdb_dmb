@@ -1,0 +1,36 @@
+# name: test/sql/dcs_type_bad_json.test
+# description: extra that is not a JSON object gives bad-extra. With the json extension loaded, the cast
+#              to DCS refuses bad JSON first ("Malformed JSON", measured 2026-11-25), so this file checks
+#              the path where json is not loaded, and says so first.
+# group: [sql]
+
+require dmb
+
+# The guard: json is not loaded here. If it is, this fails, and the file must not pass for the wrong reason.
+query I
+SELECT count(*) FROM duckdb_extensions() WHERE extension_name = 'json' AND loaded;
+----
+0
+
+statement ok
+CREATE TABLE fx AS SELECT [{'kind': 'block', 'element_type': 'paragraph', 'content': '', 'level': 1,
+    'encoding': 'text', 'attributes': MAP {}::MAP(VARCHAR, VARCHAR), 'element_order': 0}] AS doc;
+
+statement error
+SELECT dcs_apply(doc, [{'selector': 'p', 'meta': NULL::VARCHAR, 'extra': 'not json',
+    'declarations': [{'property': '--x', 'value': '"a"', 'extra': NULL::VARCHAR}]}], true) FROM fx;
+----
+dcs_apply: bad-extra at line 0, column 0: p: extra is not a JSON object
+
+statement error
+SELECT dcs_apply(doc, [{'selector': 'p', 'meta': NULL::VARCHAR, 'extra': NULL::VARCHAR,
+    'declarations': [{'property': '--x', 'value': '"a"', 'extra': '{"line": 1,'}]}], true) FROM fx;
+----
+dcs_apply: bad-extra at line 0, column 0: --x: extra is not a JSON object
+
+# Not strict: the rule still applies, as if extra were NULL.
+query I
+SELECT dcs_apply(doc, [{'selector': 'p', 'meta': NULL::VARCHAR, 'extra': 'not json',
+    'declarations': [{'property': '--x', 'value': '"a"', 'extra': NULL::VARCHAR}]}])[1].attributes FROM fx;
+----
+{x=a}

@@ -1,0 +1,123 @@
+# name: test/sql/dcs_type_handbuilt.test
+# description: a hand-built DCS value gets the diagnostic codes that text gets, and what no text can
+#              express is refused, so every accepted value can be written as text and read back
+# group: [sql]
+
+require dmb
+
+statement ok
+CREATE TABLE fx AS SELECT [{'kind': 'block', 'element_type': 'paragraph', 'content': '', 'level': 1,
+    'encoding': 'text', 'attributes': MAP {}::MAP(VARCHAR, VARCHAR), 'element_order': 0}] AS doc;
+
+# One entry and one declaration, built by hand.
+statement ok
+CREATE MACRO d(p, v, x) AS {'property': p::VARCHAR, 'value': v::VARCHAR, 'extra': x::VARCHAR};
+
+statement ok
+CREATE MACRO e(sel, meta, decls, x) AS {'selector': sel::VARCHAR, 'meta': meta::VARCHAR, 'declarations': decls, 'extra': x::VARCHAR};
+
+# A selector list where one selector is necessary.
+statement error
+SELECT dcs_apply(doc, [e('h1, h2', NULL, [d('--x', '"a"', NULL)], NULL)], true) FROM fx;
+----
+dcs_apply: selector-list at line 0, column 0
+
+# A pseudo-element in the selector and in extra.
+statement error
+SELECT dcs_apply(doc, [e('p::before', NULL, [d('content', '"a"', NULL)], '{"pseudo_element":"after"}')], true) FROM fx;
+----
+dcs_apply: pseudo-element-not-last at line 0, column 0
+
+# Values that do not tokenize, or that text could not hold.
+statement error
+SELECT dcs_apply(doc, [e('p', NULL, [d('--x', '"a', NULL)], NULL)], true) FROM fx;
+----
+dcs_apply: bad-value at line 0, column 0
+
+statement error
+SELECT dcs_apply(doc, [e('p', NULL, [d('--x', 'a; b', NULL)], NULL)], true) FROM fx;
+----
+dcs_apply: bad-value at line 0, column 0
+
+statement error
+SELECT dcs_apply(doc, [e('p', NULL, [d('--x', 'a } b', NULL)], NULL)], true) FROM fx;
+----
+dcs_apply: bad-value at line 0, column 0
+
+statement error
+SELECT dcs_apply(doc, [e('p', NULL, [d('--x', 'red !important', NULL)], NULL)], true) FROM fx;
+----
+dcs_apply: bad-value at line 0, column 0
+
+# A property that is empty, NULL, or not a name.
+statement error
+SELECT dcs_apply(doc, [e('p', NULL, [d('', '"a"', NULL)], NULL)], true) FROM fx;
+----
+dcs_apply: syntax at line 0, column 0: a declaration needs a property
+
+statement error
+SELECT dcs_apply(doc, [e('p', NULL, [d(NULL, '"a"', NULL)], NULL)], true) FROM fx;
+----
+dcs_apply: syntax at line 0, column 0: a declaration needs a property
+
+statement error
+SELECT dcs_apply(doc, [e('p', NULL, [d('--a b', '"a"', NULL)], NULL)], true) FROM fx;
+----
+dcs_apply: syntax at line 0, column 0: not a property name
+
+# meta other than NULL and 'frontmatter'; two frontmatter entries; frontmatter with media.
+statement error
+SELECT dcs_apply(doc, [e(NULL, 'other', [d('--x', '"a"', NULL)], NULL)], true) FROM fx;
+----
+dcs_apply: syntax at line 0, column 0: unknown meta 'other'
+
+statement error
+SELECT dcs_apply(doc, [e(NULL, 'frontmatter', [d('title', '"a"', NULL)], NULL),
+                       e(NULL, 'frontmatter', [d('draft', '"b"', NULL)], NULL)], true) FROM fx;
+----
+dcs_apply: syntax at line 0, column 0: a sheet has one @frontmatter entry
+
+statement error
+SELECT dcs_apply(doc, [e(NULL, 'frontmatter', [d('title', '"a"', NULL)], '{"media":"html"}')], true) FROM fx;
+----
+dcs_apply: syntax at line 0, column 0: @frontmatter can't have a media format
+
+# A plain rule with no selector.
+statement error
+SELECT dcs_apply(doc, [e(NULL, NULL, [d('--x', '"a"', NULL)], NULL)], true) FROM fx;
+----
+dcs_apply: syntax at line 0, column 0: a rule needs a selector
+
+# A media format that text could not hold.
+statement error
+SELECT dcs_apply(doc, [e('p', NULL, [d('--x', '"a"', NULL)], '{"media":"a) b"}')], true) FROM fx;
+----
+dcs_apply: syntax at line 0, column 0: not a media format
+
+# A known extra key of the wrong JSON type.
+statement error
+SELECT dcs_apply(doc, [e('p', NULL, [d('--x', '"a"', NULL)], '{"line":"x"}')], true) FROM fx;
+----
+dcs_apply: bad-extra at line 0, column 0
+
+# A check that text gets, on a hand-built value: an unknown pseudo-class, at the position in extra.
+# Unknown extra keys are ignored, whatever they hold.
+statement error
+SELECT dcs_apply(doc, [e('p:bogus', NULL, [d('--x', '"a"', NULL)], '{"line":3,"column":7,"future":[1,{"a":2}]}')], true) FROM fx;
+----
+dcs_apply: unknown-pseudo-class at line 3, column 7
+
+statement error
+SELECT dcs_apply(doc, [e('p', NULL, [d('--x', 'attr(', '{"line":2,"column":4}')], NULL)], true) FROM fx;
+----
+dcs_apply: bad-value at line 2, column 4
+
+# Not strict: each case gives the document back, with the bad part skipped.
+query I
+SELECT dcs_apply(doc, [e('h1, h2', NULL, [d('--x', '"a"', NULL)], NULL),
+                       e('p', NULL, [d('--x', 'a; b', NULL), d('', '"a"', NULL), d('--y', '"y"', NULL)], NULL),
+                       e(NULL, 'other', [], NULL),
+                       e('p', NULL, [d('--z', '"z"', NULL)], '{"line":"x"}')])[1].attributes
+FROM fx;
+----
+{y=y, z=z}
