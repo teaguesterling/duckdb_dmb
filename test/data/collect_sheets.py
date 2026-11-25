@@ -24,7 +24,7 @@ RULE = re.compile(r"^\s*(@[a-z-]+|[^{}\"'\[\]]*[a-zA-Z0-9*#.:\])])\s*[^{}]*\{")
 def literals():
     seen = {}
     for path in sorted((ROOT / "test" / "sql").glob("*.test")):
-        if path.name in ("dcs_roundtrip.test",):
+        if path.name in ("dcs_roundtrip.test", "dcs_roundtrip_strict.test"):
             continue
         # comment lines hold apostrophes ("can't") that would shift the literal matching
         body = "\n".join(l for l in path.read_text().splitlines() if not l.lstrip().startswith("#"))
