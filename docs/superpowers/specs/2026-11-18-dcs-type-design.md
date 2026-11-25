@@ -167,6 +167,15 @@ can be written by `dcs_format` and read back as the same rules:
 | an empty or NULL `property` | `syntax` |
 | a `meta` other than NULL and `'frontmatter'`, two frontmatter entries, or a frontmatter entry with `media` | `syntax` |
 
+**Amended 2026-11-25, while building (Claude's call, after a fresh review; not yet seen by Teague):** the
+row "a `value` that does not tokenize" conflicts with the first anti-goal. The text parser does not
+tokenize values, so a text sheet keeps `p { width: calc((100% - 2px) / 2); }` and `p { --x: attr(; }`
+with no parse diagnostic; a converter that tokenized every value would drop them and apply differently
+(measured: both differed). The anti-goal wins, as this spec says. So the converter refuses only what
+text cannot hold (an unterminated string, a comment, a `;`, `{` or `}` outside a string, a trailing
+`!important`, an empty value), and a value that does not tokenize gets `bad-value` from the same
+check that text gets, on the properties whose values dmb evaluates.
+
 The builder may add a new code where none of these fits, and lists it in `docs/diagnostics.md`. A position comes from `extra.line` and
 `extra.column` when they are there, and is line 0, column 0 when they are not *(Claude's call)*.
 
