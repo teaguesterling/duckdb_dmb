@@ -352,6 +352,7 @@ void FormatFun(DataChunk &args, ExpressionState &state, Vector &result) {
 void RegisterFunctions(ExtensionLoader &loader) {
 	RegisterDcsType(loader);
 	RegisterReaders(loader);
+	RegisterTableApply(loader);
 	loader.RegisterFunction(ScalarFunction("dcs_sheet", {LogicalType::VARCHAR}, DcsType(), SheetFun));
 	{
 		ScalarFunction format("dcs_format", {LogicalType::ANY}, LogicalType::VARCHAR, FormatFun);

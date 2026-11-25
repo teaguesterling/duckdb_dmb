@@ -39,8 +39,9 @@ diagnostic stays with the text: CSS that does not parse, an `@import` or another
 rule. `dcs_sheet` drops it, so strict mode raises it only for the text.
 
 A problem in the sheet never stops the document: dmb skips the rule or declaration and continues.
-Give `true` as the third argument to raise the first diagnostic as an error. The third argument is
-positional: `strict := true` does not bind.
+Give `true` as the third argument to raise the first diagnostic as an error. In the scalar form the
+third argument is positional: `strict := true` does not bind. The [table form](#the-table-form)
+takes either.
 
 ```sql
 SELECT dcs_apply(doc, 'p { text-overflow: ellipsis; }', true) FROM docs;
@@ -54,6 +55,27 @@ Without `true`, the same sheet keeps all 6 rows and gives no error.
 
 Some diagnostics need a document. An example is `-dcs-level` on a block that is not a heading.
 These come only from `dcs_apply`, and only in strict mode.
+
+### The table form
+
+```text
+FROM dcs_apply((subquery), sheet VARCHAR or DCS [, strict BOOLEAN])
+```
+
+Takes block rows directly, for example from a reader, with no `list()` around them:
+
+```sql
+FROM dcs_apply((FROM read_markdown_blocks('posts/*.md')), 'heading { -dcs-id: auto; }');
+```
+
+- The input is block rows: the seven duck_block fields, and any other columns. The output has the
+  input's columns, in the same order. Other columns pass through unchanged.
+- The rows are grouped into documents by the `filename` column. With no `filename` column, the whole
+  input is one document. In a document, the rows are taken in `element_order` order.
+- The output for each document is the scalar `dcs_apply` output, one row per block. The documents come
+  out in `filename` order, and rows with a NULL `filename` come last as one document.
+- The sheet must be a constant. `strict` can be given by position or as `strict := true`.
+- The function holds its whole input in memory. See [limits](limits.md#performance-on-large-documents).
 
 ## dcs_select
 

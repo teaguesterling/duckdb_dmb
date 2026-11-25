@@ -36,6 +36,12 @@ Two possible slowdowns are known. Neither one has been timed, so both are inferr
 - **Descendant combinators.** The matcher backtracks with no memo. A long descendant chain on a
   deep document can take much more time.
 
+**The table form of `dcs_apply` holds its whole input.** A rule such as `h2 + p` needs the whole
+document, so `FROM dcs_apply((subquery), sheet)` keeps every input row in memory, and writes the
+output after the last input row. It also runs on one thread. The rows are held outside DuckDB's
+buffer manager, so `memory_limit` does not bound them and they cannot spill to disk (inferred from
+the code; not measured). For a very large input, use the scalar form over a `GROUP BY filename`.
+
 ## How dmb differs from ast_select
 
 sitting_duck's `ast_select` also runs CSS selectors, over syntax trees.
