@@ -167,7 +167,7 @@ can be written by `dcs_format` and read back as the same rules:
 | an empty or NULL `property` | `syntax` |
 | a `meta` other than NULL and `'frontmatter'`, two frontmatter entries, or a frontmatter entry with `media` | `syntax` |
 
-**Amended 2026-11-25, while building (Claude's call, after a fresh review; not yet seen by Teague):** the
+**Amended 2026-11-25, while building, after a fresh review; approved by Teague the same day ("B: the anti-goal wins"):** the
 row "a `value` that does not tokenize" conflicts with the first anti-goal. The text parser does not
 tokenize values, so a text sheet keeps `p { width: calc((100% - 2px) / 2); }` and `p { --x: attr(; }`
 with no parse diagnostic; a converter that tokenized every value would drop them and apply differently
