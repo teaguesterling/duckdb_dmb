@@ -76,7 +76,7 @@ DCS = LIST(STRUCT(
 Registered by name, as `loader.RegisterType("DCS", ...)`, the way duckdb_webbed registers `XML`
 (`duckdb_webbed/src/xml_types.cpp:119`).
 
-**Amended 2026-11-25, while building (Claude's call; not yet approved by Teague): the type is registered
+**Amended 2026-11-25, while building; approved by Teague the same day ("No alias"): the type is registered
 without an alias.** webbed's `XML` is a `VARCHAR` with the alias `XML`. The same for a list type breaks
 the list functions on DuckDB v2.0.1. Measured on linux_amd64 with a probe type
 `LIST(STRUCT(selector VARCHAR, extra JSON))` registered with `WithAlias("DCS_PROBE")`:
