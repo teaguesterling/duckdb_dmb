@@ -176,6 +176,40 @@ SELECT dcs_apply(doc, dcs_sheet('p { width: calc((100% - 2px) / 2); }'), true)
 ----
 true
 
+# An empty value is a diagnostic of a rule's value, not a text-level one (PR #13 review): the strict
+# error is the same for text and DCS, so dcs_sheet keeps the empty declaration for the converter to refuse.
+statement error
+SELECT dcs_apply(doc, 'p { color: ; }', true) FROM fx;
+----
+dcs_apply: empty-value at line 1, column 5: declaration has no value: color
+
+statement error
+SELECT dcs_apply(doc, dcs_sheet('p { color: ; }'), true) FROM fx;
+----
+dcs_apply: empty-value at line 1, column 5: declaration has no value: color
+
+statement error
+SELECT dcs_apply(doc, dcs_sheet('p { color: !important; } h2:bogus { --x: "a"; }'), true) FROM fx;
+----
+dcs_apply: empty-value at line 1, column 5: declaration has no value: color
+
+statement error
+SELECT dcs_apply(doc, '@frontmatter { title: ; }', true) FROM fx;
+----
+dcs_apply: empty-value at line 1, column 16: declaration has no value: title
+
+statement error
+SELECT dcs_apply(doc, dcs_sheet('@frontmatter { title: ; }'), true) FROM fx;
+----
+dcs_apply: empty-value at line 1, column 16: declaration has no value: title
+
+# Not strict, the empty declaration is skipped in both forms, and the others still apply.
+query I
+SELECT dcs_apply(doc, dcs_sheet('p { color: ; --x: "a"; }')) = dcs_apply(doc, 'p { color: ; --x: "a"; }')
+   AND dcs_apply(doc, 'p { color: ; --x: "a"; }') IS DISTINCT FROM doc FROM fx;
+----
+true
+
 # A text-level diagnostic stays with the text: strict text throws, its DCS value does not (intended).
 statement error
 SELECT dcs_apply(doc, '@import "x"; p { --x: "a"; }', true) FROM fx;

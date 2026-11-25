@@ -172,6 +172,10 @@ dcs_type_apply.test,"  h2 { } h3:bogus { --x: ""a""; }",false
 dcs_type_apply.test,"h2, h3 { --x: attr(; }",false
 dcs_type_apply.test,"p { --x: attr(; } h2:bogus { --y: ""a""; }",false
 dcs_type_apply.test,"@media (format: ""html"") { p { --x: ""a""; } }",false
+dcs_type_apply.test,p { color: ; },false
+dcs_type_apply.test,"p { color: !important; } h2:bogus { --x: ""a""; }",false
+dcs_type_apply.test,@frontmatter { title: ; },false
+dcs_type_apply.test,"p { color: ; --x: ""a""; }",false
 dcs_type_apply.test,"@import ""x""; p { --x: ""a""; }",false
 dcs_type_handbuilt.test,")], true)[1].attributes FROM fx;
 ----

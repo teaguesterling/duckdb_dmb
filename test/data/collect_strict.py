@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 ERROR = re.compile(r"Error: (dcs_apply: ([a-z-]+) at line \d+, column \d+: .*)$")
 
 # The first diagnostic is text-level (sheet_parser.cpp emits it, and dcs_sheet drops it).
-TEXT_LEVEL_CODES = {"nested-rule", "unsupported-at-rule", "unsupported-media", "nested-media", "empty-value"}
+TEXT_LEVEL_CODES = {"nested-rule", "unsupported-at-rule", "unsupported-media", "nested-media"}
 TEXT_LEVEL_MESSAGES = ("@import is not supported", "this at-rule is not supported", "@frontmatter inside @media",
                        "cannot parse declaration", "cannot parse rule", "cannot parse: ", "a declaration outside",
                        "@frontmatter needs", "parentheses or brackets nested")
