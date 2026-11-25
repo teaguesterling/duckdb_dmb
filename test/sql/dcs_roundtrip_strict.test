@@ -1214,3 +1214,83 @@ statement error
 SELECT dcs_apply(doc, dcs_format(dcs_sheet('@media (format: "html") { p { --x: "a"; } }')), true) FROM docs WHERE name = 'mixed';
 ----
 dcs_apply: not-yet at line
+
+statement error
+SELECT dcs_apply(doc, dcs_sheet('p { color: ; }'), true) FROM docs WHERE name = 'fx';
+----
+dcs_apply: empty-value at line 1, column 5: declaration has no value: color
+
+statement error
+SELECT dcs_apply(doc, dcs_format(dcs_sheet('p { color: ; }')), true) FROM docs WHERE name = 'fx';
+----
+dcs_apply: empty-value at line
+
+statement error
+SELECT dcs_apply(doc, dcs_sheet('p { color: ; }'), true) FROM docs WHERE name = 'mixed';
+----
+dcs_apply: empty-value at line 1, column 5: declaration has no value: color
+
+statement error
+SELECT dcs_apply(doc, dcs_format(dcs_sheet('p { color: ; }')), true) FROM docs WHERE name = 'mixed';
+----
+dcs_apply: empty-value at line
+
+statement error
+SELECT dcs_apply(doc, dcs_sheet('p { color: !important; } h2:bogus { --x: "a"; }'), true) FROM docs WHERE name = 'fx';
+----
+dcs_apply: empty-value at line 1, column 5: declaration has no value: color
+
+statement error
+SELECT dcs_apply(doc, dcs_format(dcs_sheet('p { color: !important; } h2:bogus { --x: "a"; }')), true) FROM docs WHERE name = 'fx';
+----
+dcs_apply: empty-value at line
+
+statement error
+SELECT dcs_apply(doc, dcs_sheet('p { color: !important; } h2:bogus { --x: "a"; }'), true) FROM docs WHERE name = 'mixed';
+----
+dcs_apply: empty-value at line 1, column 5: declaration has no value: color
+
+statement error
+SELECT dcs_apply(doc, dcs_format(dcs_sheet('p { color: !important; } h2:bogus { --x: "a"; }')), true) FROM docs WHERE name = 'mixed';
+----
+dcs_apply: empty-value at line
+
+statement error
+SELECT dcs_apply(doc, dcs_sheet('@frontmatter { title: ; }'), true) FROM docs WHERE name = 'fx';
+----
+dcs_apply: empty-value at line 1, column 16: declaration has no value: title
+
+statement error
+SELECT dcs_apply(doc, dcs_format(dcs_sheet('@frontmatter { title: ; }')), true) FROM docs WHERE name = 'fx';
+----
+dcs_apply: empty-value at line
+
+statement error
+SELECT dcs_apply(doc, dcs_sheet('@frontmatter { title: ; }'), true) FROM docs WHERE name = 'mixed';
+----
+dcs_apply: empty-value at line 1, column 16: declaration has no value: title
+
+statement error
+SELECT dcs_apply(doc, dcs_format(dcs_sheet('@frontmatter { title: ; }')), true) FROM docs WHERE name = 'mixed';
+----
+dcs_apply: empty-value at line
+
+statement error
+SELECT dcs_apply(doc, dcs_sheet('p { color: ; --x: "a"; }'), true) FROM docs WHERE name = 'fx';
+----
+dcs_apply: empty-value at line 1, column 5: declaration has no value: color
+
+statement error
+SELECT dcs_apply(doc, dcs_format(dcs_sheet('p { color: ; --x: "a"; }')), true) FROM docs WHERE name = 'fx';
+----
+dcs_apply: empty-value at line
+
+statement error
+SELECT dcs_apply(doc, dcs_sheet('p { color: ; --x: "a"; }'), true) FROM docs WHERE name = 'mixed';
+----
+dcs_apply: empty-value at line 1, column 5: declaration has no value: color
+
+statement error
+SELECT dcs_apply(doc, dcs_format(dcs_sheet('p { color: ; --x: "a"; }')), true) FROM docs WHERE name = 'mixed';
+----
+dcs_apply: empty-value at line

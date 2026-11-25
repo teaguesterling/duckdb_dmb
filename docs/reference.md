@@ -208,6 +208,8 @@ the same declarations. The entries are in source order, and so are the declarati
 - The `@frontmatter` entry, if there is one, is the last entry. Two `@frontmatter` blocks in the
   text become one entry.
 - A rule whose selector was refused stays in the value, so rule numbers are the same as for the text.
+- A declaration with no value (`color: ;`) stays, with `value = ''`, so strict mode gives the same
+  `empty-value` error for the value as for the text.
 - Comments, whitespace and text-level diagnostics are not kept. `dcs_check` shows those for the text.
 
 `DCS` is registered without a type alias. On DuckDB v2.0.1 an aliased list type does not work

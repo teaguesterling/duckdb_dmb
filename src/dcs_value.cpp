@@ -73,10 +73,18 @@ Value DeclarationValue(const Declaration &d) {
 	return Value::STRUCT(DeclarationType(), {Value(d.property), Value(d.value_text), JsonOrNull(extra)});
 }
 
-Value DeclarationList(const vector<Declaration> &decls) {
+//! The kept declarations, with the empty ones back in their places (value ''), so the converter refuses
+//! them with the empty-value diagnostic text gets.
+Value DeclarationList(const vector<Declaration> &decls, const EmptyDeclarations &empties) {
 	vector<Value> values;
-	for (auto &d : decls) {
-		values.push_back(DeclarationValue(d));
+	idx_t e = 0;
+	for (idx_t i = 0; i <= decls.size(); i++) {
+		for (; e < empties.size() && empties[e].first == i; e++) {
+			values.push_back(DeclarationValue(empties[e].second));
+		}
+		if (i < decls.size()) {
+			values.push_back(DeclarationValue(decls[i]));
+		}
 	}
 	return Value::LIST(DeclarationType(), std::move(values));
 }
@@ -119,11 +127,11 @@ Value SheetToDcs(const Sheet &sheet) {
 		                         {"line", PosValue(rule.pos.line)},
 		                         {"column", PosValue(rule.pos.column)}});
 		entries.push_back(Value::STRUCT(EntryType(), {Value(rule.selector_text), Value(LogicalType::VARCHAR),
-		                                              DeclarationList(rule.declarations), JsonOrNull(extra)}));
+		                                              DeclarationList(rule.declarations, rule.empty_declarations), JsonOrNull(extra)}));
 	}
-	if (!sheet.frontmatter.empty()) {
+	if (!sheet.frontmatter.empty() || !sheet.frontmatter_empty.empty()) {
 		entries.push_back(Value::STRUCT(EntryType(), {Value(LogicalType::VARCHAR), Value("frontmatter"),
-		                                              DeclarationList(sheet.frontmatter), JsonOrNull("")}));
+		                                              DeclarationList(sheet.frontmatter, sheet.frontmatter_empty), JsonOrNull("")}));
 	}
 	return Value::LIST(EntryType(), std::move(entries));
 }
