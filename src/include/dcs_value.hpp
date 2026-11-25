@@ -25,7 +25,8 @@ Value SheetToDcs(const Sheet &sheet);
 string WriteExtra(const vector<std::pair<string, Value>> &keys);
 
 //! Parse a JSON object of scalars into `out` (strings as VARCHAR, integers as BIGINT, true/false as BOOLEAN,
-//! null as a NULL VARCHAR). A nested value is skipped, so unknown keys may hold anything. False, with
+//! null as a NULL VARCHAR, an array or object as an empty VARCHAR[]), so unknown keys may hold anything,
+//! and a known key that holds an array or object is a wrong type. False, with
 //! `error` set, when the text is not one JSON object. A NULL `extra` gives an empty map.
 bool ReadExtra(const Value &extra, std::map<string, Value> &out, string &error);
 

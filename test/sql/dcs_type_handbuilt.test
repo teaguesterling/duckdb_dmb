@@ -147,6 +147,17 @@ SELECT dcs_apply(doc, [e('p', NULL, [d('--x', '"a"', NULL)], '{"line":"x"}')], t
 ----
 dcs_apply: bad-extra at line 0, column 0
 
+# A known key that holds an array or an object is a wrong type too (PR #13 review).
+statement error
+SELECT dcs_apply(doc, [e('p', NULL, [d('--x', '"a"', '{"important":[true]}')], NULL)], true) FROM fx;
+----
+dcs_apply: bad-extra at line 0, column 0: --x: extra.important must be a JSON boolean
+
+statement error
+SELECT dcs_apply(doc, [e('p', NULL, [d('--x', '"a"', NULL)], '{"pseudo_element":{"name":"before"}}')], true) FROM fx;
+----
+dcs_apply: bad-extra at line 0, column 0: p: extra.pseudo_element must be a JSON string
+
 # A check that text gets, on a hand-built value: an unknown pseudo-class, at the position in extra.
 # Unknown extra keys are ignored, whatever they hold.
 statement error

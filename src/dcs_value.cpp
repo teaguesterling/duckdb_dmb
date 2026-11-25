@@ -254,7 +254,8 @@ struct JsonReader {
 		}
 		return Fail("an unterminated string");
 	}
-	//! One value. Scalars go to `out`; a nested object or array is skipped (out stays NULL).
+	//! One value. Scalars go to `out`; a nested object or array is read past and gives an empty
+	//! VARCHAR[] marker, so a known key that holds one is a wrong type, and an unknown key ignores it.
 	bool Element(Value &out, int depth) {
 		if (depth > MAX_NESTING) {
 			return Fail("nested too deep");
@@ -274,6 +275,7 @@ struct JsonReader {
 		}
 		if (c == '{' || c == '[') {
 			char close = c == '{' ? '}' : ']';
+			out = Value::LIST(LogicalType::VARCHAR, {});
 			i++;
 			Space();
 			if (i < s.size() && s[i] == close) {
