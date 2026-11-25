@@ -381,16 +381,32 @@ bool Known(std::map<string, Value> &keys, const string &key, LogicalTypeId type,
 	return true;
 }
 
-SourcePos ExtraPos(std::map<string, Value> &keys, const string &what, vector<Diagnostic> &diagnostics) {
-	SourcePos pos;
-	if (Known(keys, "line", LogicalTypeId::BIGINT, what, diagnostics) &&
-	    Known(keys, "column", LogicalTypeId::BIGINT, what, diagnostics)) {
-		pos.line = static_cast<int32_t>(keys["line"].GetValue<int64_t>());
-		pos.column = static_cast<int32_t>(keys["column"].GetValue<int64_t>());
-	} else {
-		Known(keys, "column", LogicalTypeId::BIGINT, what, diagnostics);
+//! A position key that SourcePos can hold: an integer from 0 to INT32_MAX. Otherwise a bad-extra
+//! diagnostic, and the key reads as absent.
+bool PositionKey(std::map<string, Value> &keys, const string &key, const string &what, vector<Diagnostic> &diagnostics,
+                 int32_t &out) {
+	if (!Known(keys, key, LogicalTypeId::BIGINT, what, diagnostics)) {
+		return false;
 	}
-	return pos;
+	auto v = keys[key].GetValue<int64_t>();
+	if (v < 0 || v > NumericLimits<int32_t>::Maximum()) {
+		diagnostics.push_back(Diagnostic {
+		    "error", "bad-extra",
+		    what + ": extra." + key + " must be an integer from 0 to " + std::to_string(NumericLimits<int32_t>::Maximum()),
+		    {}});
+		keys.erase(key);
+		return false;
+	}
+	out = static_cast<int32_t>(v);
+	return true;
+}
+
+SourcePos ExtraPos(std::map<string, Value> &keys, const string &what, vector<Diagnostic> &diagnostics) {
+	int32_t line = 0, column = 0;
+	bool have_line = PositionKey(keys, "line", what, diagnostics, line);
+	bool have_column = PositionKey(keys, "column", what, diagnostics, column);
+	// a position needs both; one alone gives none, as before
+	return have_line && have_column ? SourcePos {line, column} : SourcePos {};
 }
 
 //! What text cannot hold in a value: an unterminated string, a comment, a ';', '{' or '}' outside a

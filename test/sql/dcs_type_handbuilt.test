@@ -158,6 +158,17 @@ SELECT dcs_apply(doc, [e('p', NULL, [d('--x', '"a"', NULL)], '{"pseudo_element":
 ----
 dcs_apply: bad-extra at line 0, column 0: p: extra.pseudo_element must be a JSON string
 
+# A position that an INTEGER can't hold, or a negative one, is bad-extra, not a wrapped number (PR #13 review).
+statement error
+SELECT dcs_apply(doc, [e('p:bogus', NULL, [d('--x', '"a"', NULL)], '{"line":4294967297,"column":3}')], true) FROM fx;
+----
+dcs_apply: bad-extra at line 0, column 0: p:bogus: extra.line must be an integer from 0 to 2147483647
+
+statement error
+SELECT dcs_apply(doc, [e('p', NULL, [d('--x', '"a"', '{"line":1,"column":-5}')], NULL)], true) FROM fx;
+----
+dcs_apply: bad-extra at line 0, column 0: --x: extra.column must be an integer from 0 to 2147483647
+
 # A check that text gets, on a hand-built value: an unknown pseudo-class, at the position in extra.
 # Unknown extra keys are ignored, whatever they hold.
 statement error
