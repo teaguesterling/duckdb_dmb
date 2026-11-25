@@ -1,0 +1,4 @@
+/* headings */
+h2, h3 { color: red; }
+p::before { content: "x"; }
+@frontmatter { title: "t"; }

@@ -4,6 +4,7 @@
 #include "matcher.hpp"
 #include "apply.hpp"
 #include "dcs_value.hpp"
+#include "readers.hpp"
 
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/function/scalar_function.hpp"
@@ -350,6 +351,7 @@ void FormatFun(DataChunk &args, ExpressionState &state, Vector &result) {
 
 void RegisterFunctions(ExtensionLoader &loader) {
 	RegisterDcsType(loader);
+	RegisterReaders(loader);
 	loader.RegisterFunction(ScalarFunction("dcs_sheet", {LogicalType::VARCHAR}, DcsType(), SheetFun));
 	{
 		ScalarFunction format("dcs_format", {LogicalType::ANY}, LogicalType::VARCHAR, FormatFun);

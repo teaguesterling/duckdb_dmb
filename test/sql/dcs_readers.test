@@ -1,0 +1,106 @@
+# name: test/sql/dcs_readers.test
+# description: read_dcs_objects gives one row per .dcs file; read_dcs gives one row per rule
+# group: [sql]
+
+require dmb
+
+# One row per file, in filename order; an empty file is a row, not skipped.
+query II
+SELECT count(*), list(filename ORDER BY filename) FROM read_dcs_objects('test/data/dcs/*.dcs');
+----
+3	[test/data/dcs/a.dcs, test/data/dcs/b.dcs, test/data/dcs/empty.dcs]
+
+query I
+SELECT list(filename) FROM read_dcs_objects('test/data/dcs/*.dcs');
+----
+[test/data/dcs/a.dcs, test/data/dcs/b.dcs, test/data/dcs/empty.dcs]
+
+# The columns.
+query IIII
+SELECT typeof(filename), typeof(content), typeof(sheet) = typeof([]::DCS), typeof(diagnostics)
+FROM read_dcs_objects('test/data/dcs/a.dcs');
+----
+VARCHAR	VARCHAR	true	STRUCT(severity VARCHAR, code VARCHAR, message VARCHAR, line INTEGER, "column" INTEGER)[]
+
+# content is the file; sheet is dcs_sheet(content).
+query II
+SELECT bool_and(o.content = t.content), bool_and(o.sheet = dcs_sheet(o.content))
+FROM read_dcs_objects('test/data/dcs/*.dcs') o JOIN read_text('test/data/dcs/*.dcs') t USING (filename);
+----
+true	true
+
+# diagnostics are the rows dcs_check gives for the content.
+query I
+SELECT array_to_string(list_transform(diagnostics, lambda d: d.code || '@' || d.line || ':' || d."column"), ' ')
+FROM read_dcs_objects('test/data/dcs/b.dcs');
+----
+not-yet@1:1 nested-rule@2:18
+
+query I
+SELECT string_agg(code || '@' || line || ':' || "column", ' ') FROM dcs_check('@import "x.dcs";
+p { color: blue; p { color: red; } }
+');
+----
+not-yet@1:1 nested-rule@2:18
+
+query II
+SELECT sheet, diagnostics FROM read_dcs_objects('test/data/dcs/empty.dcs');
+----
+[]	[]
+
+# A list of globs.
+query I
+SELECT count(*) FROM read_dcs_objects(['test/data/dcs/a.dcs', 'test/data/dcs/b*.dcs']);
+----
+2
+
+# read_dcs: one row per entry, with the entry's 0-based position as rule.
+query IIIII
+SELECT filename, rule, selector, meta, len(declarations) FROM read_dcs('test/data/dcs/a.dcs') ORDER BY rule;
+----
+test/data/dcs/a.dcs	0	h2	NULL	1
+test/data/dcs/a.dcs	1	h3	NULL	1
+test/data/dcs/a.dcs	2	p	NULL	1
+test/data/dcs/a.dcs	3	NULL	frontmatter	1
+
+query I
+SELECT extra FROM read_dcs('test/data/dcs/a.dcs') WHERE rule = 2;
+----
+{"pseudo_element":"before","line":3,"column":1}
+
+# The rule numbers of plain rules are dcs_rules' numbers.
+query I
+SELECT list(DISTINCT rule ORDER BY rule) FROM dcs_rules('/* headings */
+h2, h3 { color: red; }
+p::before { content: "x"; }
+@frontmatter { title: "t"; }
+') WHERE rule IS NOT NULL;
+----
+[0, 1, 2]
+
+query I
+SELECT count(*) FROM read_dcs(['test/data/dcs/*.dcs']);
+----
+5
+
+# A glob that matches nothing is an error, not an empty result.
+statement error
+SELECT * FROM read_dcs('test/data/dcs/none*.dcs');
+----
+No files found
+
+statement error
+SELECT * FROM read_dcs_objects('test/data/dcs/none.dcs');
+----
+No files found
+
+# A sheet from a file applies as its text does.
+statement ok
+CREATE TABLE fx AS SELECT [{'kind': 'block', 'element_type': 'heading', 'content': 'Intro', 'level': 1,
+    'encoding': 'text', 'attributes': MAP {'heading_level': '2'}::MAP(VARCHAR, VARCHAR), 'element_order': 0}] AS doc;
+
+query I
+SELECT dcs_apply(doc, sheet) = dcs_apply(doc, content) AND dcs_apply(doc, sheet) IS DISTINCT FROM doc
+FROM fx, read_dcs_objects('test/data/dcs/a.dcs');
+----
+true

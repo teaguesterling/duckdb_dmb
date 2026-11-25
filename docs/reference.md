@@ -14,6 +14,8 @@ type, gives a Binder Error that names the field.
 | [`dcs_rules`](#dcs_rules) | table | the rules and declarations of a sheet |
 | [`dcs_sheet`](#dcs_sheet) | scalar | a sheet, parsed into a [`DCS`](#the-dcs-type) value |
 | [`dcs_format`](#dcs_format) | scalar | a [`DCS`](#the-dcs-type) value, written as sheet text |
+| [`read_dcs_objects`](#read_dcs_objects-read_dcs) | table | one row per `.dcs` file, with its sheet and diagnostics |
+| [`read_dcs`](#read_dcs_objects-read_dcs) | table | one row per rule of each `.dcs` file |
 | [`dcs_parse_markdown`, `dcs_parse_html`](#dcs_parse_markdown-dcs_parse_html) | macro | the document, with marked content parsed by a reader |
 | [`dcs_version`](#dcs_version-dcs_parser_abi) | scalar | the dmb version |
 | [`dcs_parser_abi`](#dcs_version-dcs_parser_abi) | scalar | the tree-sitter-css ABI |
@@ -229,6 +231,32 @@ SELECT dcs_format(dcs_sheet('h2, h3 { color: red } p::before { content: "x" !imp
 h2 { color: red; }
 h3 { color: red; }
 p::before { content: "x" !important; }
+```
+
+## read_dcs_objects, read_dcs
+
+```text
+read_dcs_objects(globs VARCHAR or VARCHAR[])
+  -> TABLE(filename VARCHAR, content VARCHAR, sheet DCS,
+           diagnostics STRUCT(severity, code, message, line, "column")[])
+read_dcs(globs VARCHAR or VARCHAR[])
+  -> TABLE(filename VARCHAR, rule INTEGER, selector VARCHAR, meta VARCHAR,
+           declarations STRUCT(property, value, extra JSON)[], extra JSON)
+```
+
+`read_dcs_objects` gives one row per file, in filename order. `sheet` is `dcs_sheet(content)`, and
+`diagnostics` holds the rows that `dcs_check(content)` gives, the text-level ones included. An
+empty file is a row with an empty sheet.
+
+`read_dcs` gives one row per entry of each file's [`DCS`](#the-dcs-type) value. `rule` is the
+entry's 0-based position, which is the rule number of `dcs_rules` and `dcs_explain` for a plain
+rule. It has no diagnostics column: use `read_dcs_objects` or `dcs_check`.
+
+A glob that matches no file, or a file that cannot be read, is an error.
+
+```sql
+SELECT filename, dcs_apply(doc, sheet) AS doc
+FROM docs, read_dcs_objects('styles/*.dcs');
 ```
 
 ## dcs_version, dcs_parser_abi

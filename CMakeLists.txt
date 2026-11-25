@@ -28,6 +28,7 @@ set(EXTENSION_SOURCES
     src/values.cpp
     src/apply.cpp
     src/dcs_value.cpp
+    src/readers.cpp
     ${TREE_SITTER_SOURCES})
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
