@@ -1,0 +1,101 @@
+# name: test/sql/dcs_sheet.test
+# description: dcs_sheet(text) parses a sheet into a DCS value: one entry per rule after selector lists
+#              are split, the @frontmatter entry last, and less common values in the extra JSON
+# group: [sql]
+
+require dmb
+
+# The type is a struct list with JSON extras. DCS is registered without an alias (an aliased list type
+# does not match len, [i] or list_transform on DuckDB v2.0.1), so typeof shows the structure.
+query I
+SELECT typeof(dcs_sheet('h1 { color: red; }'));
+----
+STRUCT(selector VARCHAR, meta VARCHAR, declarations STRUCT(property VARCHAR, "value" VARCHAR, extra JSON)[], extra JSON)[]
+
+# The name DCS is registered, and a value queries with the list functions.
+query I
+SELECT []::DCS IS NOT NULL;
+----
+true
+
+query I
+SELECT typeof(dcs_sheet('h1 { color: red; }')) = typeof([]::DCS);
+----
+true
+
+# One entry per selector after splitting a list; both entries carry the declarations.
+query I
+SELECT len(dcs_sheet('h2, h3 { color: red; }'));
+----
+2
+
+query IIII
+SELECT s[1].selector, s[2].selector, s[1].declarations[1].value, s[2].declarations[1].value
+FROM (SELECT dcs_sheet('h2, h3 { color: red; }') AS s);
+----
+h2	h3	red	red
+
+# A plain rule: meta is NULL; positions are in extra.
+query IIII
+SELECT s[1].meta IS NULL, s[1].extra, s[1].declarations[1].property, s[1].declarations[1].extra
+FROM (SELECT dcs_sheet('h1 { color: red; }') AS s);
+----
+true	{"line":1,"column":1}	color	{"line":1,"column":6}
+
+# The positions are the ones dcs_rules reports for the same text.
+query II
+SELECT line, "column" FROM dcs_rules('p::before { content: "x" !important; }');
+----
+1	13
+
+# The pseudo-element is in the rule's extra, not in the selector; !important is in the declaration's.
+query IIII
+SELECT s[1].selector, s[1].extra, s[1].declarations[1].value, s[1].declarations[1].extra
+FROM (SELECT dcs_sheet('p::before { content: "x" !important; }') AS s);
+----
+p	{"pseudo_element":"before","line":1,"column":1}	"x"	{"important":true,"line":1,"column":13}
+
+# @media (format: X) is in the rule's extra. (No ->> here: the json extension need not be loaded.)
+query I
+SELECT dcs_sheet('@media (format: html) { p { color: red; } }')[1].extra;
+----
+{"media":"html","line":1,"column":25}
+
+# @frontmatter: one entry, last, meta 'frontmatter', selector NULL; two blocks merge, as text does.
+query IIIIII
+SELECT len(s), s[1].selector, s[2].meta, s[2].selector IS NULL, s[2].extra IS NULL,
+       list_transform(s[2].declarations, lambda d: d.property)
+FROM (SELECT dcs_sheet('@frontmatter { title: "a"; } p { color: red; } @frontmatter { draft: "y"; }') AS s);
+----
+2	p	frontmatter	true	true	[title, draft]
+
+# A rule whose selector was refused stays in the value, with its text.
+query II
+SELECT len(s), s[1].selector FROM (SELECT dcs_sheet('p:bogus { color: red; }') AS s);
+----
+1	p:bogus
+
+# A refused selector keeps its whole text, with no pseudo-element: otherwise p::before.x (refused) would
+# come back as p plus pseudo_element before, a valid rule (found by review, 2026-11-25).
+query II
+SELECT s[1].selector, s[1].extra FROM (SELECT dcs_sheet('p::before.x { content: "z"; }') AS s);
+----
+p::before.x	{"line":1,"column":1}
+
+# Text-level diagnostics (here @import) are dropped: dcs_check shows them for the text.
+query I
+SELECT len(dcs_sheet('@import "x"; p { color: red; }'));
+----
+1
+
+# The value is its source text.
+query I
+SELECT dcs_sheet('p { --x: "a" attr(id); }')[1].declarations[1].value;
+----
+"a" attr(id)
+
+# An empty sheet is an empty list; NULL in, NULL out.
+query II
+SELECT dcs_sheet('') = []::DCS, dcs_sheet(NULL) IS NULL;
+----
+true	true

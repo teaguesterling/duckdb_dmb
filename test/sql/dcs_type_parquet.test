@@ -1,0 +1,101 @@
+# name: test/sql/dcs_type_parquet.test
+# description: a DCS value stored in Parquet and read back applies as its text does. Its own file, because
+#              it needs the parquet extension: `require parquet` skips a whole file when parquet is missing.
+# group: [sql]
+
+require dmb
+
+require parquet
+
+statement ok
+CREATE TYPE duck_block AS STRUCT(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER,
+    encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
+
+statement ok
+CREATE MACRO b(k, t, c, lvl, attrs, o) AS
+    {'kind': k, 'element_type': t, 'content': c, 'level': lvl, 'encoding': 'text',
+     'attributes': attrs::MAP(VARCHAR, VARCHAR), 'element_order': o}::duck_block;
+
+# The fixture from dcs_explain.test, plus a code block.
+statement ok
+CREATE TABLE fx AS SELECT [
+  b('block', 'heading', 'Intro', 1, MAP {'heading_level': '1', 'id': 'intro'}, 0),
+  b('block', 'paragraph', '', 1, MAP {}, 1),
+  b('inline', 'text', 'Hello world', 2, MAP {}, 2),
+  b('block', 'heading', 'Comments', 1, MAP {'heading_level': '2'}, 3),
+  b('block', 'paragraph', '', 1, MAP {'class': 'note wide'}, 4),
+  b('inline', 'text', 'First', 2, MAP {}, 5),
+  b('block', 'list', '', 1, MAP {'list_type': 'bullet'}, 6),
+  b('block', 'list_item', '', 2, MAP {}, 7),
+  b('inline', 'text', 'a', 3, MAP {}, 8),
+  b('block', 'list_item', '', 2, MAP {}, 9),
+  b('inline', 'text', 'b', 3, MAP {}, 10),
+  b('block', 'heading', 'End', 1, MAP {'heading_level': '2'}, 11),
+  b('block', 'paragraph', '', 1, MAP {}, 12),
+  b('inline', 'text', 'Bye', 2, MAP {}, 13),
+  b('block', 'code', 'x = 1', 1, MAP {'language': 'python'}, 14)
+] AS doc;
+
+# Sheets from the other tests, covering every phase.
+statement ok
+CREATE TABLE sheets AS SELECT * FROM (VALUES
+  ('p { --x: "a"; } .note { --x: "b"; }'),
+  ('heading { -dcs-id: auto; }'),
+  ('h2:contains("Comments") { -dcs-prune: section; }'),
+  ('list { display: none; }'),
+  ('paragraph { display: contents; }'),
+  ('paragraph { -dcs-level: +1; } paragraph { -dcs-as: table; } paragraph { display: contents; }'),
+  ('list { counter-reset: n 10; } li { counter-increment: n; } li::before { content: counter(n) " "; }'),
+  ('code::after { content: "y"; }'),
+  ('blockquote { order: 1; } p { order: first; }'),
+  ('@frontmatter { title: text(h2:contains("Comments")); } h1 { --heading_level: 3; }'),
+  ('list, image { -dcs-dedupe: text; }'),
+  ('h2, h3 { --x: "a"; } h2 { --x: "b" !important; } .note { --x: "c"; }'),
+  ('@media (format: html) { p { --x: "m"; } } p { --y: "n"; }'),
+  (':bogus { --x: "y"; } p { --x: "z"; }'),
+  ('#intro { display: none; } #intro + paragraph { --seen: "1"; }'),
+  ('p { -dcs-colour: red; } li::before { content: "- "; }')
+) v(t);
+
+# dcs_apply: the same document for text and for its DCS value.
+query I
+SELECT count(*) FROM sheets, fx WHERE dcs_apply(doc, t) IS DISTINCT FROM dcs_apply(doc, dcs_sheet(t));
+----
+0
+
+# A guard that the fixture is not trivial: most sheets change the document. (11 of the 16 do, measured
+# 2026-11-25; display: contents, -dcs-as, code::after, order and -dcs-dedupe find nothing to change here.)
+query I
+SELECT n >= 10 FROM (SELECT count(*) AS n FROM sheets, fx WHERE dcs_apply(doc, t) IS DISTINCT FROM doc);
+----
+true
+
+# dcs_explain: the same changes, with the same rule numbers.
+query I
+SELECT count(*) FROM sheets, fx WHERE dcs_explain(doc, t) IS DISTINCT FROM dcs_explain(doc, dcs_sheet(t));
+----
+0
+
+# Stored in a table, then applied.
+statement ok
+CREATE TABLE st AS SELECT t, dcs_sheet(t) AS s FROM sheets;
+
+query I
+SELECT count(*) FROM st, fx WHERE dcs_apply(doc, t) IS DISTINCT FROM dcs_apply(doc, s);
+----
+0
+
+# Stored in Parquet, read back (the type has no DCS name then), then applied.
+statement ok
+COPY st TO '{TEST_DIR}/dcs_sheets.parquet';
+
+query I
+SELECT count(*) FROM '{TEST_DIR}/dcs_sheets.parquet', fx
+WHERE dcs_apply(doc, t) IS DISTINCT FROM dcs_apply(doc, s) OR dcs_explain(doc, t) IS DISTINCT FROM dcs_explain(doc, s);
+----
+0
+
+query I
+SELECT count(*) FROM '{TEST_DIR}/dcs_sheets.parquet';
+----
+16

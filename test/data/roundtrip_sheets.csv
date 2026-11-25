@@ -1,0 +1,185 @@
+source,sheet,clean
+dcs_apply_content.test,"h2::after { content: "" [¶](#"" attr(id) "")""; }",true
+dcs_apply_content.test,"p::before { content: ""» ""; }",true
+dcs_apply_content.test,"li::before { content: ""- ""; }",true
+dcs_apply_content.test,"p::after { content: ""End""; -dcs-content-place: block; }",true
+dcs_apply_content.test,"h2 { content: text() "" (draft)""; }",true
+dcs_apply_content.test,"p { content: ""Replaced""; }",true
+dcs_apply_content.test,"list { content: ""x""; } code::after { content: ""y""; }",true
+dcs_apply_content.test,"list { content: ""x""; }",true
+dcs_apply_content.test,"code::after { content: ""y""; }",true
+dcs_apply_content.test,"h2::after { content: "" [¶](#"" attr(id) "")""; -dcs-content-as: markdown; }",true
+dcs_apply_content.test,"p::after { content: ""*x*""; -dcs-content-as: md; -dcs-content-place: block; }",true
+dcs_apply_content.test,"p::after { content: ""*x*""; -dcs-content-as: rst; }",false
+dcs_apply_content.test,"h2 { counter-increment: h; } h2::before { content: counter(h) "". ""; }",true
+dcs_apply_content.test,"list { counter-reset: n 10; } li { counter-increment: n; } li::before { content: counter(n) "" ""; }",true
+dcs_apply_content.test,p { text-transform: uppercase; },true
+dcs_apply_content.test,list { text-transform: uppercase; },true
+dcs_apply_content.test,p { text-transform: capitalize; },true
+dcs_apply_content.test,"p { -dcs-replace: ""l+"" ""L""; }",true
+dcs_apply_content.test,p { -dcs-link: absolute; },false
+dcs_apply_identity.test,h2 { -dcs-id: slug(text()); },true
+dcs_apply_identity.test,heading { -dcs-id: auto; },true
+dcs_apply_identity.test,"paragraph { --x: slug(""1. Café, naïve!""); }",true
+dcs_apply_identity.test,.note { -dcs-class: +callout -wide; },true
+dcs_apply_identity.test,"paragraph { --audience: ""kids""; }",true
+dcs_apply_identity.test,img { --title: unset; },true
+dcs_apply_identity.test,h1 { --heading_level: 3; },false
+dcs_apply_identity.test,"p { --x: ""a""; } .note { --x: ""b""; } p { --x: ""c""; }",true
+dcs_apply_identity.test,"h2 { -dcs-id: ""z""; } #z { --hit: ""y""; }",true
+dcs_apply_identity.test,"h2 { -dcs-class: +k; } .k { --hit: ""y""; }",true
+dcs_apply_identity.test,"h2 { -dcs-id: ""z""; } #z { -dcs-class: +seen; }",true
+dcs_apply_identity.test,":external { --x: ""y""; } #intro { --x: ""z""; }",false
+dcs_apply_identity.test,":external { --x: ""y""; }",false
+dcs_apply_identity.test,":bogus { --x: ""y""; }",false
+dcs_apply_identity.test,"p { --a: ""b""; }",true
+dcs_apply_identity.test,p {},true
+dcs_apply_late_phases.test,.fn { order: 1; },true
+dcs_apply_late_phases.test,li:first-child { order: 1; },true
+dcs_apply_late_phases.test,"p:contains(""Two"") { order: -1; }",true
+dcs_apply_late_phases.test,p { order: first; },false
+dcs_apply_late_phases.test,"@frontmatter { title: text(h1); tags: ""clippings""; }",true
+dcs_apply_late_phases.test,@frontmatter { title: text(h1); },true
+dcs_apply_late_phases.test,"@frontmatter { tags: ""a""; }",true
+dcs_apply_late_phases.test,"@frontmatter { title: ""New""; tags: ""t""; }",true
+dcs_apply_late_phases.test,"@frontmatter { q: ""say \""hi\"" \\ bye""; }",true
+dcs_apply_late_phases.test,@frontmatter { title: text(h1:first-of-type); },true
+dcs_apply_late_phases.test,p { color: red; } .fn { color: blue; font-weight: bold; },true
+dcs_apply_late_phases.test,p { color: red; },true
+dcs_apply_late_phases.test,p { -dcs-colour: red; },false
+dcs_apply_late_phases.test,"p:contains(""a"") { order: 1; }",true
+dcs_apply_late_phases.test,blockquote { order: 1; },true
+dcs_apply_prune.test,list { display: none; },true
+dcs_apply_prune.test,"h2:contains(""Comments"") { -dcs-prune: section; }",true
+dcs_apply_prune.test,paragraph { -dcs-dedupe: text; },true
+dcs_apply_prune.test,"#intro { display: none; } #intro + paragraph { --seen: ""1""; }",true
+dcs_apply_prune.test,paragraph { -dcs-prune: section; },true
+dcs_apply_structure.test,section { display: contents; },true
+dcs_apply_structure.test,paragraph { -dcs-wrap: blockquote; },true
+dcs_apply_structure.test,code { -dcs-wrap: callout(note); },true
+dcs_apply_structure.test,h2 { -dcs-as: paragraph; },true
+dcs_apply_structure.test,h2 { -dcs-as: h4; },true
+dcs_apply_structure.test,"paragraph:contains(""Two"") { -dcs-as: h3; }",true
+dcs_apply_structure.test,h2 { -dcs-level: +1; },true
+dcs_apply_structure.test,h2 { -dcs-level: -5; },true
+dcs_apply_structure.test,h2 { -dcs-level: 9; },true
+dcs_apply_structure.test,h2 { -dcs-level: 4; },true
+dcs_apply_structure.test,code:data { -dcs-as: table; },true
+dcs_apply_structure.test,paragraph { -dcs-level: +1; } paragraph { -dcs-as: table; } paragraph { display: contents; },true
+dcs_apply_structure.test,paragraph { -dcs-level: +1; },true
+dcs_apply_structure.test,paragraph { -dcs-as: table; },true
+dcs_apply_structure.test,paragraph { display: contents; },true
+dcs_apply_table.test,"heading { -dcs-id: auto; } .note { --x: ""b""; }",true
+dcs_apply_table.test,"list { display: none; } p::before { content: ""> ""; }",true
+dcs_apply_table.test,"p { --x: ""a""; }",true
+dcs_apply_table.test,"h2:bogus { --x: ""a""; }",false
+dcs_apply_table.test,"p:first-child { --first: ""y""; }",true
+dcs_check.test,"heading { -dcs-id: auto; } .comment { --audience: ""kids""; }",true
+dcs_check.test,"p { a: b; }
+[x >= 2] { a: b; }",false
+dcs_check.test,":bogus { --x: ""1""; }",false
+dcs_check.test,p { -dcs-prune: sideways; },false
+dcs_check.test,p { --x: frob(1); },false
+dcs_check.test,p { -dcs-id: slug(text())); },false
+dcs_check.test,p { -dcs-foo: 1; } p { display: grid; },false
+dcs_check.test,/* é */ p { -dcs-prune: x; },false
+dcs_check.test,"h2 { -dcs-id: slug(text(), ascii); }",false
+dcs_check.test,h2 { -dcs-id: slug(); },false
+dcs_check.test,"p { --a: attr(x, y); }",false
+dcs_check.test,p { --b: text(x); },false
+dcs_check.test,"h2 { -dcs-id: slug(attr(x, y)); }",false
+dcs_check.test,h2 { -dcs-id: slug(text()); } p { --a: attr(x); --b: slug(attr(x)); },true
+dcs_explain.test,"p { --x: ""a""; } .note { --x: ""b""; }",true
+dcs_explain.test,"p {
+  color: red;
+  --x: ""a"";
+}",true
+dcs_explain.test,"@frontmatter { title: ""Ducks""; }",true
+dcs_final_review.test,h2::after { -dcs-id: auto; -dcs-class: +x; },false
+dcs_final_review.test,p:not() { display: none; },false
+dcs_final_review.test,p:has() { display: none; },false
+dcs_final_review.test,:section(h2::after) { display: none; },false
+dcs_final_review.test,p:h(two) { display: none; },false
+dcs_final_review.test,:h(7) { display: none; },false
+dcs_final_review.test,:h(2) { display: none; },true
+dcs_final_review.test,:h(two) { display: none; },false
+dcs_final_review.test,"p { -dcs-replace: ""("" ""x""; }",false
+dcs_final_review.test,p:external { display: none; },false
+dcs_final_review.test,"@font-face { font-family: ""日本語日本語日本語日本語日本語""; }",false
+dcs_final_review.test,"@font-face { a: ""ab日本語日本語日本語日本語日本語日本語""; }",false
+dcs_final_review.test,"@frontmatter { title: text(h2:contains(""Comments"")); }",true
+dcs_final_review.test,"@frontmatter { title: text(h1, h2); }",true
+dcs_final_review.test, */ p { display: none; },true
+dcs_final_review.test,li:nth-child(99999999999n) { a: b; },false
+dcs_format.test,"h2, h3 { color: red; --x: ""a""; }",true
+dcs_format.test,"p::before { content: ""x"" !important; }",true
+dcs_format.test,"@media (format: html) { p { --x: ""m""; } h2 { --y: ""n""; } } p { --z: ""o""; }",false
+dcs_format.test,"@frontmatter { title: ""a""; } p { color: red; }",true
+dcs_format.test,"h2,h3{color:red}",true
+dcs_readers.test,"@import ""x.dcs"";
+p { color: blue; p { color: red; } }
+",false
+dcs_readers.test,"/* headings */
+h2, h3 { color: red; }
+p::before { content: ""x""; }
+@frontmatter { title: ""t""; }
+",true
+dcs_review_fixes.test,"list, image { -dcs-dedupe: text; }",true
+dcs_review_fixes.test,li:nth-child(99999999999n) { a: b; } p { c: d; },false
+dcs_review_fixes.test,"li:nth-child(99999999999n) { --a: ""b""; }",false
+dcs_review_fixes.test,"p { --a: ""x"" /* why */; }",true
+dcs_review_fixes.test,image { display: none /* hide */; },true
+dcs_rules.test,"h2, h3 { -dcs-id: slug(text()); }",true
+dcs_rules.test,"p { content: ""¶""; color: red; }",true
+dcs_rules.test,"#intro { a: b; }
+:chrome { a: b; }
+p:not(.x) { a: b; }
+div[class*=sidebar] ~ p { a: b; }
+:section(h2:contains(""x"")) > p { a: b; }
+* { a: b; }",true
+dcs_rules.test,p { -dcs-class: +note -draft; },true
+dcs_rules.test,@media (format: html) { h1 { color: red; } },false
+dcs_rules.test,p { color: red !important; },true
+dcs_rules_errors.test,"p { a: b; }
+[x >= 2] { a: b; }
+h1 { c: d; }
+h2 { e: f; }",false
+dcs_rules_errors.test,"p { -dcs-replace: ""\d{3}"" ""###""; color: red; }",true
+dcs_sheet.test,h1 { color: red; },true
+dcs_sheet.test,"h2, h3 { color: red; }",true
+dcs_sheet.test,@media (format: html) { p { color: red; } },false
+dcs_sheet.test,"@frontmatter { title: ""a""; } p { color: red; } @frontmatter { draft: ""y""; }",true
+dcs_sheet.test,p:bogus { color: red; },false
+dcs_sheet.test,"p::before.x { content: ""z""; }",false
+dcs_sheet.test,"@import ""x""; p { color: red; }",false
+dcs_sheet.test,"p { --x: ""a"" attr(id); }",true
+dcs_type_apply.test,blockquote { order: 1; } p { order: first; },false
+dcs_type_apply.test,"@frontmatter { title: text(h2:contains(""Comments"")); } h1 { --heading_level: 3; }",false
+dcs_type_apply.test,"h2, h3 { --x: ""a""; } h2 { --x: ""b"" !important; } .note { --x: ""c""; }",true
+dcs_type_apply.test,"@media (format: html) { p { --x: ""m""; } } p { --y: ""n""; }",false
+dcs_type_apply.test,":bogus { --x: ""y""; } p { --x: ""z""; }",false
+dcs_type_apply.test,"p { -dcs-colour: red; } li::before { content: ""- ""; }",false
+dcs_type_apply.test,"p { --x: ""a"" !important; } .note { --x: ""b""; }",true
+dcs_type_apply.test,"p { --x: ""a""; } p { --x: attr(; }",false
+dcs_type_apply.test,p { width: calc((100% - 2px) / 2); },true
+dcs_type_apply.test,"p { --naïve: ""x""; }",true
+dcs_type_apply.test,"@media (format: ""html"") { p { --x: ""a""; } } p { --y: ""b""; }",false
+dcs_type_apply.test,"p { } h2:bogus { --x: ""a""; }",false
+dcs_type_apply.test,p { --x: attr(; },false
+dcs_type_apply.test,"h2:contains(""é""), p:bogus { --x: ""a""; }",false
+dcs_type_apply.test,p { },true
+dcs_type_apply.test,"  h2 { } h3:bogus { --x: ""a""; }",false
+dcs_type_apply.test,"h2, h3 { --x: attr(; }",false
+dcs_type_apply.test,"p { --x: attr(; } h2:bogus { --y: ""a""; }",false
+dcs_type_apply.test,"@media (format: ""html"") { p { --x: ""a""; } }",false
+dcs_type_apply.test,p { color: ; },false
+dcs_type_apply.test,"p { color: !important; } h2:bogus { --x: ""a""; }",false
+dcs_type_apply.test,@frontmatter { title: ; },false
+dcs_type_apply.test,"p { color: ; --x: ""a""; }",false
+dcs_type_apply.test,"@import ""x""; p { --x: ""a""; }",false
+dcs_type_handbuilt.test,")], true)[1].attributes FROM fx;
+----
+{x=a}
+
+statement error
+SELECT dcs_apply(doc, [e(",false

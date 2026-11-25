@@ -1,0 +1,181 @@
+# name: test/sql/dcs_apply_table.test
+# description: FROM dcs_apply((subquery), sheet [, strict]): block rows in, block rows out, grouped
+#              into documents by filename
+# group: [sql]
+
+require dmb
+
+statement ok
+CREATE TYPE duck_block AS STRUCT(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER,
+    encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
+
+statement ok
+CREATE MACRO b(k, t, c, lvl, attrs, o) AS
+    {'kind': k, 'element_type': t, 'content': c, 'level': lvl, 'encoding': 'text',
+     'attributes': attrs::MAP(VARCHAR, VARCHAR), 'element_order': o}::duck_block;
+
+statement ok
+CREATE TABLE fx AS SELECT [
+  b('block', 'heading', 'Intro', 1, MAP {'heading_level': '1', 'id': 'intro'}, 0),
+  b('block', 'paragraph', '', 1, MAP {}, 1),
+  b('inline', 'text', 'Hello world', 2, MAP {}, 2),
+  b('block', 'heading', 'Comments', 1, MAP {'heading_level': '2'}, 3),
+  b('block', 'paragraph', '', 1, MAP {'class': 'note wide'}, 4),
+  b('inline', 'text', 'First', 2, MAP {}, 5),
+  b('block', 'list', '', 1, MAP {'list_type': 'bullet'}, 6),
+  b('block', 'list_item', '', 2, MAP {}, 7),
+  b('inline', 'text', 'a', 3, MAP {}, 8),
+  b('block', 'heading', 'End', 1, MAP {'heading_level': '2'}, 9),
+  b('block', 'paragraph', '', 1, MAP {}, 10),
+  b('inline', 'text', 'Bye', 2, MAP {}, 11)
+] AS doc;
+
+# Block rows of two files, with an extra column, stored out of order.
+statement ok
+CREATE TABLE rows AS
+SELECT * FROM (SELECT f AS filename, unnest(doc, recursive := true), f || '#' AS note
+               FROM fx, (VALUES ('b.md'), ('a.md')) v(f))
+ORDER BY element_order DESC, filename;
+
+# The scalar form, per file, as rows: what the table form must give.
+statement ok
+CREATE MACRO scalar_form(sheet) AS TABLE
+SELECT unnest(dcs_apply(list({'filename': filename, 'kind': kind, 'element_type': element_type,
+    'content': content, 'level': level, 'encoding': encoding, 'attributes': attributes,
+    'element_order': element_order, 'note': note} ORDER BY element_order), sheet), recursive := true)
+FROM rows GROUP BY filename;
+
+# The same rows as the scalar form, for each sheet (both directions of EXCEPT ALL are empty).
+statement ok
+CREATE MACRO check_sheet(s) AS TABLE
+  (FROM dcs_apply((FROM rows), s) EXCEPT ALL FROM scalar_form(s))
+  UNION ALL
+  (FROM scalar_form(s) EXCEPT ALL FROM dcs_apply((FROM rows), s));
+
+query I
+SELECT count(*) FROM check_sheet('heading { -dcs-id: auto; } .note { --x: "b"; }');
+----
+0
+
+query I
+SELECT count(*) FROM check_sheet('h2:contains("Comments") { -dcs-prune: section; }');
+----
+0
+
+query I
+SELECT count(*) FROM check_sheet('list { display: none; } p::before { content: "> "; }');
+----
+0
+
+query I
+SELECT count(*) FROM check_sheet('@frontmatter { title: text(h1); }');
+----
+0
+
+# A guard that the comparison is not empty.
+query I
+SELECT count(*) FROM dcs_apply((FROM rows), 'heading { -dcs-id: auto; }');
+----
+24
+
+# Output columns are the input's, in order, with their types; note passes through.
+query I
+SELECT string_agg(column_name || ' ' || column_type, '; ') FROM (DESCRIBE FROM dcs_apply((FROM rows), 'p { --x: "a"; }'));
+----
+filename VARCHAR; kind VARCHAR; element_type VARCHAR; content VARCHAR; level INTEGER; encoding VARCHAR; attributes MAP(VARCHAR, VARCHAR); element_order INTEGER; note VARCHAR
+
+query I
+SELECT count(*) FROM dcs_apply((FROM rows), 'p { --x: "a"; }') WHERE note <> filename || '#';
+----
+0
+
+# The documents come out in filename order, each in element_order order, with no ORDER BY.
+query II nosort
+SELECT filename, element_order FROM dcs_apply((FROM rows), 'p { --x: "a"; }') LIMIT 3;
+----
+a.md	0
+a.md	1
+a.md	2
+
+# Rows 12 and 13 (12 rows per document): the last of a.md, then the first of b.md.
+query II nosort
+SELECT filename, element_order FROM dcs_apply((FROM rows), 'p { --x: "a"; }') LIMIT 2 OFFSET 11;
+----
+a.md	11
+b.md	0
+
+# No filename column: the whole input is one document.
+query I
+SELECT count(*) FROM dcs_apply((SELECT unnest(doc, recursive := true) FROM fx), 'heading { -dcs-id: auto; }')
+WHERE attributes['id'] IS NOT NULL;
+----
+3
+
+# A DCS value gives the same rows as its text.
+query I
+SELECT count(*) FROM (
+  (FROM dcs_apply((FROM rows), dcs_sheet('heading { -dcs-id: auto; } .note { --x: "b"; }'))
+   EXCEPT ALL FROM dcs_apply((FROM rows), 'heading { -dcs-id: auto; } .note { --x: "b"; }')));
+----
+0
+
+# Strict, by position or by name.
+statement error
+FROM dcs_apply((FROM rows), 'h2:bogus { --x: "a"; }', true);
+----
+dcs_apply: unknown-pseudo-class at line 1, column 1
+
+statement error
+FROM dcs_apply((FROM rows), 'h2:bogus { --x: "a"; }', strict := true);
+----
+dcs_apply: unknown-pseudo-class at line 1, column 1
+
+query I
+SELECT count(*) FROM dcs_apply((FROM rows), 'h2:bogus { --x: "a"; }');
+----
+24
+
+# Many rows, several threads, files interleaved: grouping must not depend on how DuckDB splits the
+# input. 3 files x 1000 paragraphs; :first-child matches once per document, so 3 rows, not 1.
+# verify_parallelism makes the scan split even this small table: without it, a version that lets the
+# function run on 8 threads still passed here; with it, that version gives 6 (measured 2026-11-25).
+statement ok
+SET threads = 4;
+
+statement ok
+PRAGMA verify_parallelism;
+
+statement ok
+CREATE TABLE many AS
+SELECT 'f' || (i % 3) || '.md' AS filename, 'block' AS kind, 'paragraph' AS element_type, '' AS content,
+       1 AS level, 'text' AS encoding, MAP {}::MAP(VARCHAR, VARCHAR) AS attributes,
+       (i // 3)::INTEGER AS element_order
+FROM range(3000) r(i) ORDER BY element_order, filename;
+
+query III
+SELECT count(*), count(*) FILTER (WHERE attributes['first'] = 'y'), count(DISTINCT (filename, element_order))
+FROM dcs_apply((FROM many), 'p:first-child { --first: "y"; }');
+----
+3000	3	3000
+
+query I
+SELECT list(filename ORDER BY filename) FROM dcs_apply((FROM many), 'p:first-child { --first: "y"; }')
+WHERE attributes['first'] = 'y';
+----
+[f0.md, f1.md, f2.md]
+
+# Errors: no sheet; a NULL sheet; an input that is not block rows.
+statement error
+FROM dcs_apply((FROM rows));
+----
+dcs_apply
+
+statement error
+FROM dcs_apply((FROM rows), NULL);
+----
+dcs_apply: the sheet is NULL
+
+statement error
+FROM dcs_apply((SELECT 1 AS a), 'p { --x: "a"; }');
+----
+dcs_apply: the block struct has no field

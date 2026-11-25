@@ -1,0 +1,53 @@
+# name: test/sql/dcs_format.test
+# description: dcs_format(sheet) writes a DCS value as .dcs text: one rule per line, in list order
+# group: [sql]
+
+require dmb
+
+# Newlines are shown as | here, so each result fits on one row.
+statement ok
+CREATE MACRO fmt(s) AS replace(dcs_format(s), chr(10), '|');
+
+# A split list stays split: one rule per entry.
+query I
+SELECT fmt(dcs_sheet('h2, h3 { color: red; --x: "a"; }'));
+----
+h2 { color: red; --x: "a"; }|h3 { color: red; --x: "a"; }|
+
+# The pseudo-element comes back onto the selector; !important onto the value.
+query I
+SELECT fmt(dcs_sheet('p::before { content: "x" !important; }'));
+----
+p::before { content: "x" !important; }|
+
+# Rules with a media format go in @media; adjacent rules with the same format share one block.
+query I
+SELECT fmt(dcs_sheet('@media (format: html) { p { --x: "m"; } h2 { --y: "n"; } } p { --z: "o"; }'));
+----
+@media (format: html) {|p { --x: "m"; }|h2 { --y: "n"; }|}|p { --z: "o"; }|
+
+# The frontmatter entry is last.
+query I
+SELECT fmt(dcs_sheet('@frontmatter { title: "a"; } p { color: red; }'));
+----
+p { color: red; }|@frontmatter { title: "a"; }|
+
+# Values are written as stored. A rule with no declarations is kept.
+query I
+SELECT fmt([{'selector': 'li', 'meta': NULL::VARCHAR, 'extra': NULL::VARCHAR,
+             'declarations': [{'property': 'content', 'value': 'counter(n)   " "', 'extra': NULL::VARCHAR}]},
+            {'selector': 'p', 'meta': NULL::VARCHAR, 'extra': NULL::VARCHAR, 'declarations': []}]);
+----
+li { content: counter(n)   " "; }|p { }|
+
+# Text is parsed first, so dcs_format(text) gives the text in this form.
+query I
+SELECT fmt('h2,h3{color:red}');
+----
+h2 { color: red; }|h3 { color: red; }|
+
+# An empty sheet is empty text; NULL gives NULL.
+query II
+SELECT dcs_format([]::DCS), dcs_format(NULL::DCS) IS NULL;
+----
+(empty)	true

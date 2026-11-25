@@ -129,7 +129,9 @@ struct Builder {
 	explicit Builder(const string &text_p) : text(text_p), lines(text_p) {
 	}
 
-	bool ParseDeclaration(TsCtx &ctx, TSNode decl, Declaration &out) {
+	//! False when the declaration is not kept. `empty` is then set when it had a property but no value.
+	bool ParseDeclaration(TsCtx &ctx, TSNode decl, Declaration &out, bool &empty) {
+		empty = false;
 		// The value is the source text between ':' and ';' or '!important' (plan D4). tree-sitter's
 		// parse of the value is only a token hint: `-dcs-class: +note -draft` parses as arithmetic
 		// with a MISSING operand, and that must not drop the declaration.
@@ -157,7 +159,9 @@ struct Builder {
 		}
 		out.value_text = TrimBoth(StripComments(ctx.src.substr(vstart, vend > vstart ? vend - vstart : 0)));
 		if (out.value_text.empty()) {
-			ctx.Diag("error", "empty-value", "declaration has no value: " + ctx.Text(decl), decl);
+			ctx.Diag("error", "empty-value", "declaration has no value: " + out.property, decl);
+			out.pos = ctx.Pos(decl);
+			empty = true;
 			return false;
 		}
 		while (!out.value_text.empty() && (out.value_text.back() == ' ' || out.value_text.back() == '\t' ||
@@ -172,7 +176,7 @@ struct Builder {
 	//! Recover `property: value;` pairs from an ERROR node inside a block, by its source text.
 	//! Measured: tree-sitter-css makes an ERROR of a declaration whose string holds "{", and of
 	//! every declaration after it in the block. Splits on ':' and ';' outside strings (plan D4).
-	void Recover(TsCtx &ctx, TSNode err, vector<Declaration> &decls) {
+	void Recover(TsCtx &ctx, TSNode err, vector<Declaration> &decls, EmptyDeclarations &empties) {
 		auto text = ctx.Text(err);
 		uint32_t base = ts_node_start_byte(err);
 		size_t start = 0;
@@ -226,17 +230,13 @@ struct Builder {
 			while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back()))) {
 				value.pop_back();
 			}
-			if (value.empty()) {
-				ctx.diagnostics.push_back(
-				    Diagnostic {"error", "empty-value", "declaration has no value: " + Trim40(Trim(piece)), pos});
+			if (value.empty() || TrimBoth(StripComments(value)).empty()) {
+				ctx.diagnostics.push_back(Diagnostic {"error", "empty-value", "declaration has no value: " + property, pos});
+				d.pos = pos;
+				empties.emplace_back(decls.size(), std::move(d));
 				continue;
 			}
 			d.value_text = TrimBoth(StripComments(value));
-			if (d.value_text.empty()) {
-				ctx.diagnostics.push_back(
-				    Diagnostic {"error", "empty-value", "declaration has no value: " + Trim40(Trim(piece)), pos});
-				continue;
-			}
 			d.pos = pos;
 			d.order = decl_order++;
 			decls.push_back(std::move(d));
@@ -244,21 +244,24 @@ struct Builder {
 	}
 
 	//! The declarations of a { ... } block, recovering from ERROR nodes.
-	void Declarations(TsCtx &ctx, TSNode block, vector<Declaration> &decls) {
+	void Declarations(TsCtx &ctx, TSNode block, vector<Declaration> &decls, EmptyDeclarations &empties) {
 		for (uint32_t i = 0; i < ts_node_named_child_count(block); i++) {
 			auto c = ts_node_named_child(block, i);
 			auto t = NodeType(c);
 			if (t == "declaration") {
 				Declaration d;
-				if (ParseDeclaration(ctx, c, d)) {
+				bool empty;
+				if (ParseDeclaration(ctx, c, d, empty)) {
 					decls.push_back(std::move(d));
+				} else if (empty) {
+					empties.emplace_back(decls.size(), std::move(d));
 				}
 			} else if (t == "comment" || t == "js_comment") {
 				continue;
 			} else if (t == "rule_set") {
 				ctx.Diag("warning", "nested-rule", "nested rules are not supported: " + ctx.Text(c), c);
 			} else if (t == "ERROR") {
-				Recover(ctx, c, decls);
+				Recover(ctx, c, decls, empties);
 			} else {
 				ctx.Diag("error", "syntax", "cannot parse " + ctx.Text(c), c);
 			}
@@ -291,7 +294,13 @@ struct Builder {
 			ctx.Diag("error", "syntax", "@frontmatter needs a { ... } block", at);
 			return;
 		}
-		Declarations(ctx, block, sheet.frontmatter);
+		auto first = sheet.frontmatter.size();
+		EmptyDeclarations empties;
+		Declarations(ctx, block, sheet.frontmatter, empties);
+		for (auto &e : empties) {
+			// a second @frontmatter block appends to the first, so places count in the merged list
+			sheet.frontmatter_empty.emplace_back(first + e.first, std::move(e.second));
+		}
 	}
 
 	void RuleSet(TsCtx &ctx, TSNode rs, const string &media) {
@@ -313,7 +322,8 @@ struct Builder {
 			return;
 		}
 		vector<Declaration> decls;
-		Declarations(ctx, block, decls);
+		EmptyDeclarations empties;
+		Declarations(ctx, block, decls, empties);
 		for (uint32_t i = 0; i < ts_node_named_child_count(selectors); i++) {
 			auto sel = ts_node_named_child(selectors, i);
 			auto st = NodeType(sel);
@@ -325,9 +335,14 @@ struct Builder {
 			rule.media_format = media;
 			rule.pos = ctx.Pos(sel);
 			rule.declarations = decls;
+			rule.empty_declarations = empties;
 			rule.usable = CompileSelectorNode(ctx, sel, rule.selector, rule.pseudo_element);
 			rule.selector_text = ctx.Text(sel);
-			if (!rule.pseudo_element.empty()) {
+			if (!rule.usable) {
+				// A refused selector keeps its whole text: compiling can set the pseudo-element before it
+				// fails (p::before.x), and cutting at "::" would turn the refused rule into a valid p::before.
+				rule.pseudo_element.clear();
+			} else if (!rule.pseudo_element.empty()) {
 				auto cut = rule.selector_text.rfind("::");
 				if (cut != string::npos) {
 					rule.selector_text = rule.selector_text.substr(0, cut);

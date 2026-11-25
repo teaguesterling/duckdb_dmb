@@ -35,12 +35,17 @@ struct Declaration {
 	SourcePos pos;
 };
 
+//! A declaration with no value, and its place among the kept declarations. The parser reports it
+//! (empty-value) and Apply never sees it; dcs_sheet keeps it, so a DCS value gives the same diagnostic.
+using EmptyDeclarations = vector<std::pair<idx_t, Declaration>>;
+
 struct Rule {
 	int32_t index = 0; // after splitting selector lists
 	string selector_text;
 	ComplexSelector selector;
 	string pseudo_element; // "", "before", "after"
 	vector<Declaration> declarations;
+	EmptyDeclarations empty_declarations;
 	string media_format; // from @media (format: X); "" when unscoped
 	SourcePos pos;
 	bool usable = true; // false: the selector was refused, and Apply skips the rule
@@ -49,6 +54,7 @@ struct Rule {
 struct Sheet {
 	vector<Rule> rules;
 	vector<Declaration> frontmatter; // @frontmatter declarations, in source order (phase 6)
+	EmptyDeclarations frontmatter_empty;
 	vector<Diagnostic> diagnostics;
 };
 
@@ -66,6 +72,11 @@ Sheet ParseSheet(const string &text);
 //! Compile one selector from text, as dcs_select and :section() need.
 bool CompileSelectorText(const string &text, ComplexSelector &out, string &pseudo_element,
                          vector<Diagnostic> &diagnostics, SourcePos pos);
+
+//! As CompileSelectorText, but each diagnostic is at its place inside `text`, with `text` starting at
+//! `origin`: the positions a rule's own text gives. An origin of line 0 puts every diagnostic at 0, 0.
+bool CompileSelectorAt(const string &text, ComplexSelector &out, string &pseudo_element,
+                       vector<Diagnostic> &diagnostics, SourcePos origin);
 
 } // namespace dmb
 } // namespace duckdb
