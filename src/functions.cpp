@@ -3,6 +3,7 @@
 #include "block_tree.hpp"
 #include "matcher.hpp"
 #include "apply.hpp"
+#include "dcs_value.hpp"
 
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/function/scalar_function.hpp"
@@ -314,9 +315,23 @@ void ExplainFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// dcs_sheet(text): the sheet as a DCS value
+// ---------------------------------------------------------------------------
+
+void SheetFun(DataChunk &args, ExpressionState &state, Vector &result) {
+	for (idx_t row = 0; row < args.size(); row++) {
+		auto text = args.data[0].GetValue(row);
+		result.SetValue(row, text.IsNull() ? Value(result.GetType()) : SheetToDcs(ParseSheet(text.ToString())));
+	}
+}
+
 } // namespace
 
 void RegisterFunctions(ExtensionLoader &loader) {
+	RegisterDcsType(loader);
+	loader.RegisterFunction(ScalarFunction("dcs_sheet", {LogicalType::VARCHAR}, DcsType(), SheetFun));
+
 	TableFunction check("dcs_check", {LogicalType::VARCHAR}, RulesScan, CheckBind, RulesInit);
 	loader.RegisterFunction(check);
 

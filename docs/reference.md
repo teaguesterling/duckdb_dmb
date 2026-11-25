@@ -12,6 +12,7 @@ type, gives a Binder Error that names the field.
 | [`dcs_explain`](#dcs_explain) | scalar | one entry per change, with the rule that made it |
 | [`dcs_check`](#dcs_check) | table | the diagnostics for a sheet |
 | [`dcs_rules`](#dcs_rules) | table | the rules and declarations of a sheet |
+| [`dcs_sheet`](#dcs_sheet) | scalar | a sheet, parsed into a [`DCS`](#the-dcs-type) value |
 | [`dcs_parse_markdown`, `dcs_parse_html`](#dcs_parse_markdown-dcs_parse_html) | macro | the document, with marked content parsed by a reader |
 | [`dcs_version`](#dcs_version-dcs_parser_abi) | scalar | the dmb version |
 | [`dcs_parser_abi`](#dcs_version-dcs_parser_abi) | scalar | the tree-sitter-css ABI |
@@ -145,6 +146,57 @@ and `dcs_parse_html` needs the webbed extension. Each macro leaves rows marked f
 unchanged. A document with no marked rows comes back unchanged.
 
 The [¶ anchor sheet](cookbook.md#a-anchor-after-every-heading) shows `dcs_parse_markdown`.
+
+## The DCS type
+
+A `DCS` value is a parsed sheet. dmb's functions use it to hand a sheet to each other, and you can
+store it in a table or a Parquet file, or build one in SQL.
+
+```text
+DCS = STRUCT(selector     VARCHAR,
+             meta         VARCHAR,
+             declarations STRUCT(property VARCHAR, value VARCHAR, extra JSON)[],
+             extra        JSON)[]
+```
+
+One list entry is one rule after selector lists are split: `h2, h3 { ... }` gives two entries with
+the same declarations. The entries are in source order, and so are the declarations of each entry.
+
+| Field | Holds |
+|---|---|
+| `selector` | The selector text of one rule, without the pseudo-element. NULL for the `@frontmatter` entry |
+| `meta` | NULL for a plain rule. `'frontmatter'` for the declarations of `@frontmatter` |
+| `declarations` | In source order. `value` is the source text of the value |
+| rule `extra` | `pseudo_element` (`"before"` or `"after"`), `media` (the X of `@media (format: X)`), `line`, `column` |
+| declaration `extra` | `important` (only when true), `line`, `column` |
+
+- A key with no value is left out of `extra`, and `extra` is NULL when it is empty.
+- The `@frontmatter` entry, if there is one, is the last entry. Two `@frontmatter` blocks in the
+  text become one entry.
+- A rule whose selector was refused stays in the value, so rule numbers are the same as for the text.
+- Comments, whitespace and text-level diagnostics are not kept. `dcs_check` shows those for the text.
+
+`DCS` is registered without a type alias. On DuckDB v2.0.1 an aliased list type does not work
+with `len`, `v[i]` or `list_transform`. So `typeof` and `DESCRIBE` show the struct list, not `DCS`.
+`CAST(x AS DCS)` and a column declared as `DCS` work.
+
+## dcs_sheet
+
+```text
+dcs_sheet(sheet VARCHAR) -> DCS
+```
+
+Parses a sheet into a [`DCS`](#the-dcs-type) value. NULL gives NULL.
+
+```sql
+SELECT s.selector, s.extra
+FROM (SELECT unnest(dcs_sheet('h2, h3::before { content: "#"; }')) AS s);
+```
+
+| selector | extra |
+|---|---|
+| h2 | {"line":1,"column":1} |
+| h3 | {"pseudo_element":"before","line":1,"column":5} |
 
 ## dcs_version, dcs_parser_abi
 
