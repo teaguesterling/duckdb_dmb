@@ -38,7 +38,7 @@
 //
 // For dmb (RE2 and the vendored tree-sitter):
 //   node test/wasm/check_wasm_imports.mjs build/wasm_eh/extension/dmb/dmb.duckdb_extension.wasm \
-//       --forbid '^_ZN10duckdb_re2' --forbid '^(ts_|tree_sitter_)'
+//       --forbid '^_Z(NK?|T[VTIS]N)10duckdb_re2' --forbid '^(ts_|tree_sitter_)'
 //
 // Adapted from duckdb_webbed's test/wasm/check_wasm_imports.mjs.
 //

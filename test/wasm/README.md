@@ -11,7 +11,7 @@ DuckDB's RE2 wrapper (`duckdb_re2::Regex`), but not the `RE2` class that dmb cal
 ```sh
 make wasm_eh
 node test/wasm/check_wasm_imports.mjs build/wasm_eh/extension/dmb/dmb.duckdb_extension.wasm \
-    --forbid '^_ZN10duckdb_re2' --forbid '^(ts_|tree_sitter_)' --verbose
+    --forbid '^_Z(NK?|T[VTIS]N)10duckdb_re2' --forbid '^(ts_|tree_sitter_)' --verbose
 ```
 
 It needs only `node`: no duckdb-wasm engine and no version match.
