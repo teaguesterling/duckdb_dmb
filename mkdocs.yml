@@ -55,6 +55,7 @@ exclude_docs: |
 nav:
   - Home: index.md
   - Getting started: getting-started.md
+  - Walkthrough: walkthrough.md
   - The DCS language:
       - Selectors: language/selectors.md
       - Properties by phase: language/properties.md
