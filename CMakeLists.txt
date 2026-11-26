@@ -32,6 +32,19 @@ set(EXTENSION_SOURCES
     src/apply_table.cpp
     ${TREE_SITTER_SOURCES})
 
+# WASM: the loadable module is linked by a separate emcc -sSIDE_MODULE=2 step
+# (duckdb/extension/extension_build_tools.cmake) that links only this
+# variable's libraries, and reads it in build_loadable_extension, so it is set
+# first. duckdb-wasm exports DuckDB's Regex wrapper but not the duckdb_re2::RE2
+# class that dmb calls (-dcs-replace, :matches), so dmb links its own copy.
+# A literal path: a $<TARGET_FILE:...> genexpr resolves empty in that step
+# (duckdb_webbed found the same). test/wasm/check_wasm_imports.mjs checks it.
+if(EMSCRIPTEN)
+  set(DUCKDB_EXTENSION_DMB_LINKED_LIBS
+      "${CMAKE_BINARY_DIR}/third_party/re2/libduckdb_re2.a"
+      CACHE STRING "" FORCE)
+endif()
+
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 
