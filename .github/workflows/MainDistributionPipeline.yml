@@ -47,3 +47,44 @@ jobs:
       # `ran tests: N passed` in the Test step's log; N == 0 means no coverage,
       # whatever colour the check is.
       test_config: '{"test_env_variables": {"T": "--test-flags \"--require dmb\" \"test/sql/*\""}}'
+
+  # The reusable workflow builds and uploads the wasm modules but never inspects or
+  # loads them, so a module that imports a dependency the engine does not export
+  # ships green. That happened: until PR #14, every dmb regex feature threw
+  # "n is not a function" in duckdb-wasm, because RE2 was not linked into the
+  # module. Model: duckdb_webbed's wasm-load-test job (its issue #96). See test/wasm/.
+  #   1. Static check over every wasm build in the run (3 on main, wasm_eh only on
+  #      a pull request): no RE2 or tree-sitter symbol may stay an import.
+  #   2. Live test in an engine built from dmb's DuckDB commit (package.json pins
+  #      it; a dev prerelease today): INSTALL, LOAD, and one query that compiles a
+  #      regular expression. `npm ci` against the lockfile, so a third-party
+  #      release cannot turn this red.
+  wasm-checks:
+    name: WASM checks
+    needs: [duckdb-stable-build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Download WASM artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dmb-v2.0.1-extension-wasm_*
+          path: wasm-artifacts
+      - name: Static symbol check (RE2 and tree-sitter must be linked)
+        run: bash test/wasm/run_wasm_checks.sh wasm-artifacts
+      - name: Live load test in duckdb-wasm (wasm_eh)
+        timeout-minutes: 10
+        working-directory: test/wasm
+        run: |
+          set -euo pipefail
+          timeout 300 npm ci --ignore-scripts
+          wasm="$(find "$GITHUB_WORKSPACE/wasm-artifacts/dmb-v2.0.1-extension-wasm_eh" -name dmb.duckdb_extension.wasm)"
+          test -n "$wasm" || { echo "no dmb.duckdb_extension.wasm in the wasm_eh artifact"; exit 1; }
+          mkdir -p repo/v2.0.1/wasm_eh
+          cp "$wasm" repo/v2.0.1/wasm_eh/
+          timeout 240 node load_test.cjs --repo repo --name dmb --platform eh \
+            --query "SELECT dcs_version() AS v, (SELECT code FROM dcs_check('p { -dcs-replace: \"(\" \"x\"; }')) AS code" \
+            --expect '"code":"bad-regex"'

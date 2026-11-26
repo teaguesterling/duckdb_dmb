@@ -1,0 +1,9 @@
+{
+  "name": "dmb-wasm-tests",
+  "private": true,
+  "description": "Dependencies for the duckdb-wasm live load test (load_test.cjs). The static check (check_wasm_imports.mjs / run_wasm_checks.sh) needs none. The engine pin must be built from the DuckDB commit dmb pins: @duckdb/duckdb-wasm 1.33.1-dev124.0 reports v2.0.1, source_id 8d78114e90, platform wasm_eh (measured 2026-11-26). It is a dev prerelease (npm tag next). Bump in lockstep with the duckdb submodule.",
+  "dependencies": {
+    "@duckdb/duckdb-wasm": "1.33.1-dev124.0",
+    "web-worker": "1.2.0"
+  }
+}

@@ -7,3 +7,5 @@ duckdb_unittest_tempdir/
 !.bird/hooks/
 !.bird/config.toml
 !.bird/commands.toml
+test/wasm/node_modules/
+test/wasm/repo/
