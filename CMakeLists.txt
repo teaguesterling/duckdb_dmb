@@ -48,6 +48,12 @@ endif()
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 
+# The literal path above makes no target edge, so without this a parallel or
+# dmb-only wasm build links before libduckdb_re2.a exists.
+if(EMSCRIPTEN)
+  add_dependencies(${LOADABLE_EXTENSION_NAME} duckdb_re2)
+endif()
+
 # MSVC needs /std:c++17 for duckdb's vendored fmt (same reason as duck_block_utils).
 if(MSVC)
   target_compile_options(${EXTENSION_NAME}
