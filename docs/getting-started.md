@@ -82,7 +82,7 @@ WHERE u.element_type = 'heading';
 
 The `-dcs-id: auto` declaration gives each heading an id made from its text.
 
-Next, read about [selectors](language/selectors.md), or look at the [cookbook](cookbook.md).
+Next, follow the [walkthrough](walkthrough.md), read about [selectors](language/selectors.md), or look at the [cookbook](cookbook.md).
 
 ## With real readers
 
