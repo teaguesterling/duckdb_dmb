@@ -20,7 +20,8 @@ make wasm_eh
 test/wasm/run_wasm_checks.sh            # build/wasm_mvp, build/wasm_eh, build/wasm_threads if present
 ```
 
-It needs only `node`: no duckdb-wasm engine and no version match.
+It needs only `node`: no duckdb-wasm engine and no version match. With `EXPECT_MODULES=n` it also
+fails unless it checked exactly n modules; CI sets 1 on a pull request and 3 otherwise.
 
 ## 2. Live load test
 

@@ -3,8 +3,10 @@
 # dmb.duckdb_extension.wasm under the given directories: local build dirs or
 # downloaded CI artifacts. No duckdb-wasm runtime needed.
 #
-# Usage: test/wasm/run_wasm_checks.sh [dir ...]
+# Usage: [EXPECT_MODULES=n] test/wasm/run_wasm_checks.sh [dir ...]
 #   defaults to build/wasm_mvp build/wasm_eh build/wasm_threads if present.
+#   EXPECT_MODULES: fail unless exactly n modules were checked (CI sets it, so
+#   a missing build cannot pass as a smaller run).
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -43,4 +45,8 @@ if [ "$found" -eq 0 ]; then
   exit 2
 fi
 echo "checked $found module(s)"
+if [ -n "${EXPECT_MODULES:-}" ] && [ "$found" -ne "$EXPECT_MODULES" ]; then
+  echo "FAIL: expected $EXPECT_MODULES module(s), checked $found" >&2
+  rc=1
+fi
 exit $rc
