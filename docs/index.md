@@ -10,8 +10,8 @@ attributes, drop sections, wrap or retype blocks, add generated text, reorder bl
 front matter.
 
 !!! warning "Status: v0.1.0, the first release"
-    dmb is not in the DuckDB community extensions yet. You build it from source. It targets
-    DuckDB v2.0.1. The [limits](limits.md) page lists what does not work yet.
+    dmb is in the DuckDB community extensions: `INSTALL dmb FROM community; LOAD dmb;`. It
+    targets DuckDB v2.0.1. The [limits](limits.md) page lists what does not work yet.
 
 ## Before and after
 

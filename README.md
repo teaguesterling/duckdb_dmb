@@ -12,7 +12,7 @@ heading  { -dcs-id: auto; }                       /* give every heading an ancho
 h2:contains("Comments") { -dcs-prune: section; }  /* drop a whole section */
 ```
 
-**Status: v0.1.0, the first release; not yet in the community extensions repository.** All seven phases of the
+**Status: v0.1.0, the first release; in the community extensions repository (`INSTALL dmb FROM community`).** All seven phases of the
 [design](docs/superpowers/specs/2026-11-13-dcs-design.md) have a first implementation: ids and
 classes, attributes and pruning, structure, content, order, `@frontmatter`, and presentation. The
 gaps are in [What does not work yet](#what-does-not-work-yet). The
@@ -33,7 +33,7 @@ targets DuckDB v2.0.1.
 
 ```sh
 git submodule update --init --recursive
-make release GEN=ninja            # on longbottom: srun -n 1 -c 8 --mem=16G -p batch -t 120 make release GEN=ninja
+make release GEN=ninja
 build/release/test/unittest "test/sql/*"
 ```
 

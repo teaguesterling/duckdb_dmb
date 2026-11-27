@@ -18,22 +18,11 @@ dmb applies the sheet, and duck_block_utils writes the result as Markdown.
 ```sql
 INSTALL markdown FROM community;
 INSTALL duck_block_utils FROM community;
+INSTALL dmb FROM community;
 LOAD markdown;
 LOAD duck_block_utils;
+LOAD dmb;
 ```
-
-!!! note "dmb is not in the community extensions yet"
-    Until it is, build dmb from source with the DuckDB version set, so that it loads beside the
-    community extensions:
-
-    ```sh
-    OVERRIDE_GIT_DESCRIBE=v2.0.1 make release GEN=ninja
-    build/release/duckdb -unsigned
-    ```
-
-    ```sql
-    LOAD 'build/release/extension/dmb/dmb.duckdb_extension';
-    ```
 
 ## 1. The document
 
